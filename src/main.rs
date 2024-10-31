@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match event_linter.lint(&md) {
         Ok(_) => info!("LGTM!"),
         // TODO: switch from debug to display when we make good error messages
-        Err(e) => error!("{:?}", e),
+        Err(e) => error!("{}", e),
     }
 
     Ok(())

@@ -5,25 +5,29 @@ use chrono::{NaiveDate, ParseError};
 use log::debug;
 use regex::Regex;
 
-// TODO: clean all this up, it's a bit of a hack to just get things working
-// maybe use actual markdown library for things like headers etc
+// TODO: maybe use actual markdown library for things like headers etc
 const START_EVENTS_SECTION: &str = "## Upcoming Events";
-const EVENTS_DATE_RANGE: &str = "Rusty Events between";
 const EVENT_REGION_HEADER: &str = "### ";
-const EVENT_DATE_LOCATION_GROUP: &str = "* 2024";
-const EVENT_NAME_LINK: &str = "    * [**";
 const END_EVENTS_SECTION: &str = "If you are running a Rust event please add it to the [calendar]";
 
+/// Regex for grabbing timestamps - we use chrono to parse this and do the actual validation
 const DATE_RE_STR: &str = r"\d{4}-\d{1,2}-\d{1,2}";
 
 static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    let re_str = format!(r".*({})\s+-\s+({})", DATE_RE_STR, DATE_RE_STR);
+    let re_str = format!(
+        r"Rusty Events between ({}) - ({})",
+        DATE_RE_STR, DATE_RE_STR
+    );
     Regex::new(&re_str).expect("Failed to compile regex!")
 });
+
 static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     let re_str = format!(r"\* ({}) \| (.*) \| ", DATE_RE_STR);
     Regex::new(&re_str).expect("Failed to compile regex!")
 });
+
+static EVENT_NAME_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"    \* \[\*\*.*\*\*\]\(.*\)").expect("Failed to compile regex!"));
 
 // TODO:
 // - lint actual line contents (like everything is formatted strictly)
@@ -31,6 +35,11 @@ static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
 // - lint for empty regions
 // - fix how we parse lines, rather than just parsing a line by itself without context, be able to pass a hint as to what the line should be
 // - clean up errors and error messages
+// - tests
+// - don't exit on minor errors - keep going
+// - add tools for adding new events
+// - validate urls
+// - check for duplicated links
 
 /// An error linting - this error should provide enough information by itself to be useful to a user
 #[derive(Debug)]
@@ -40,9 +49,11 @@ pub enum LintError {
     },
     UnexpectedDateRange {
         line_num: usize,
+        line: String,
     },
     UnexpectedLineType {
         line_num: usize,
+        line: String,
         linter_state: String,
         line_type: String,
     },
@@ -55,8 +66,10 @@ pub enum LintError {
     EventOutOfOrder {
         line_num: usize,
         line: String,
-        event: EventDateLocation,
-        previous_event: EventDateLocation,
+        event_date: NaiveDate,
+        event_location: String,
+        previous_event_date: NaiveDate,
+        previous_event_location: String,
     },
     DateRangeNotSet {
         line_num: usize,
@@ -78,10 +91,52 @@ pub enum LintError {
     UnexpectedEnd,
 }
 
+impl LintError {
+    fn build_error_message(&self) -> String {
+        match self {
+            Self::UnexpectedLineType {
+                line_num,
+                linter_state,
+                line_type,
+                line,
+            } => {
+                format!(
+                    "Line {}, linter in state '{}', found line type '{}'. Invalid line: '{}'",
+                    line_num, linter_state, line_type, line
+                )
+            }
+            Self::EventOutOfDateRange {
+                line_num,
+                line,
+                event_date,
+                date_range,
+            } => {
+                format!(
+                    "Line {}, event date '{}' does not fall within newsletter date range '{} - {}'. Invalid line: '{}'",
+                    line_num, event_date, date_range.0, date_range.1, line
+                )
+            }
+            Self::EventOutOfOrder {
+                line_num,
+                line,
+                event_date,
+                event_location,
+                previous_event_date,
+                previous_event_location,
+            } => {
+                format!(
+                    "Line {}, event date '{}' and location '{}' should be after previous event date '{}' and location '{}'. Invalid line: '{}'",
+                    line_num, event_date, event_location, previous_event_date, previous_event_location, line
+                )
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 impl Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: do this
-        write!(f, "error!")
+        write!(f, "{}", self.build_error_message())
     }
 }
 
@@ -116,7 +171,7 @@ enum EventLineType {
     /// End of the event section "If you are running a Rust event please add..."
     EndEventSection,
     /// A line we don't recognize - should only be lines that are not within the event section
-    Unrecognized,
+    Unrecognized(String),
 }
 
 impl FromStr for EventLineType {
@@ -129,7 +184,7 @@ impl FromStr for EventLineType {
         let parsed = match s {
             _ if s.is_empty() => Self::Newline,
             _ if s.starts_with(START_EVENTS_SECTION) => Self::StartEventSection,
-            s if s.starts_with(EVENTS_DATE_RANGE) => {
+            s if EVENT_DATE_RANGE_RE.is_match(s) => {
                 let parsed_time_range = Self::extract_date_range(s)?;
                 Self::EventsDateRange(parsed_time_range.0, parsed_time_range.1)
             }
@@ -137,16 +192,16 @@ impl FromStr for EventLineType {
                 let region = Self::extract_region_header(s)?;
                 Self::EventRegionHeader(region.to_owned())
             }
-            s if s.starts_with(EVENT_DATE_LOCATION_GROUP) => {
+            s if EVENT_DATE_LOCATION_RE.is_match(s) => {
                 let (date, location) = Self::extract_date_location_group(s)?;
                 Self::EventDateLocationGroupLink(EventDateLocation {
                     date,
                     location: location.to_owned(),
                 })
             }
-            _ if s.starts_with(EVENT_NAME_LINK) => Self::EventNameLink,
+            s if EVENT_NAME_LINK_RE.is_match(s) => Self::EventNameLink,
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
-            _ => Self::Unrecognized,
+            s => Self::Unrecognized(s.to_owned()),
         };
 
         Ok(parsed)
@@ -158,16 +213,12 @@ impl fmt::Display for EventLineType {
         let s = match self {
             Self::Newline => "Newline",
             Self::StartEventSection => "StartEventSection",
-            Self::EventsDateRange(start, end) => &format!(
-                "EventsDateRange({}, {})",
-                start.to_string(),
-                end.to_string()
-            ),
+            Self::EventsDateRange(start, end) => &format!("EventsDateRange({}, {})", start, end),
             Self::EventRegionHeader(region) => &format!("EventRegionHeader({})", region),
             Self::EventDateLocationGroupLink(_event_date_location) => "EventDateLocationGroupLink", // TODO: fix this
             Self::EventNameLink => "EventNameLink",
             Self::EndEventSection => "EndEventSection",
-            Self::Unrecognized => "Unrecognized",
+            Self::Unrecognized(line) => "Unrecognized",
         };
         write!(f, "{}", s)
     }
@@ -409,13 +460,17 @@ impl EventSectionLinter {
                     self.linter_state = self.linter_state.next()?;
                     Ok(())
                 } else {
-                    Err(LintError::UnexpectedDateRange { line_num })
+                    Err(LintError::UnexpectedDateRange {
+                        line_num,
+                        line: line.to_owned(),
+                    })
                 }
             }
             _ => Err(LintError::UnexpectedLineType {
                 line_num,
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
+                line: line.to_owned(),
             }),
         }
     }
@@ -444,6 +499,7 @@ impl EventSectionLinter {
                 line_num,
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
+                line: line.to_owned(),
             }),
         }
     }
@@ -486,8 +542,10 @@ impl EventSectionLinter {
                         return Err(LintError::EventOutOfOrder {
                             line_num,
                             line: line.to_string(),
-                            event: event_date_location,
-                            previous_event: previous_event.clone(),
+                            event_date: event_date_location.date,
+                            event_location: event_date_location.location,
+                            previous_event_date: previous_event.date,
+                            previous_event_location: previous_event.location.to_owned(),
                         });
                     }
                 }
@@ -511,6 +569,7 @@ impl EventSectionLinter {
                 line_num,
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
+                line: line.to_owned(),
             }),
         }
     }
@@ -532,6 +591,7 @@ impl EventSectionLinter {
                 line_num,
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
+                line: line.to_owned(),
             }),
         }
     }
