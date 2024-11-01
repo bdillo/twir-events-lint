@@ -13,6 +13,17 @@ const END_EVENTS_SECTION: &str = "If you are running a Rust event please add it 
 /// Regex for grabbing timestamps - we use chrono to parse this and do the actual validation
 const DATE_RE_STR: &str = r"\d{4}-\d{1,2}-\d{1,2}";
 
+/// Line "types" in the event section. We use this in several different stringy contexts, so just hardcode the strings here
+/// See EventLineType for a description of each type
+const NEWLINE_TYPE: &str = "Newline";
+const START_EVENT_SECTION_TYPE: &str = "StartEventSection";
+const EVENTS_DATE_RANGE_TYPE: &str = "EventsDateRange";
+const EVENT_REGION_HEADER_TYPE: &str = "EventRegionHeader";
+const EVENT_DATE_LOCATION_GROUP_TYPE: &str = "EventDateLocationGroup";
+const EVENT_NAME_TYPE: &str = "EventName";
+const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
+const UNRECOGNIZED_TYPE: &str = "Unrecognized";
+
 static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let re_str = format!(
         r"Rusty Events between ({}) - ({})",
@@ -56,6 +67,7 @@ pub enum LintError {
         line: String,
         linter_state: String,
         line_type: String,
+        expected_line_types: Vec<String>,
     },
     EventOutOfDateRange {
         line_num: usize,
@@ -93,16 +105,20 @@ pub enum LintError {
 
 impl LintError {
     fn build_error_message(&self) -> String {
-        match self {
+        let mut s = "Lint Error:\n".to_owned();
+        s.push_str(&match self {
             Self::UnexpectedLineType {
                 line_num,
                 linter_state,
                 line_type,
                 line,
+                expected_line_types,
             } => {
+                let types = expected_line_types.join(" ");
+                let trimmed = types.trim();
                 format!(
-                    "Line {}, linter in state '{}', found line type '{}'. Invalid line: '{}'",
-                    line_num, linter_state, line_type, line
+                    "Line {}, linter in state '{}'\nExpected line type(s): '{}'\nFound line type '{}'\nInvalid line: '{}'\n",
+                    line_num, linter_state, line_type, trimmed, line
                 )
             }
             Self::EventOutOfDateRange {
@@ -112,7 +128,7 @@ impl LintError {
                 date_range,
             } => {
                 format!(
-                    "Line {}, event date '{}' does not fall within newsletter date range '{} - {}'. Invalid line: '{}'",
+                    "Line {}\nEvent date '{}' does not fall within newsletter date range '{} - {}'\nInvalid line: '{}'",
                     line_num, event_date, date_range.0, date_range.1, line
                 )
             }
@@ -125,12 +141,20 @@ impl LintError {
                 previous_event_location,
             } => {
                 format!(
-                    "Line {}, event date '{}' and location '{}' should be after previous event date '{}' and location '{}'. Invalid line: '{}'",
+                    "Line {}\nEvent date '{}' and location '{}' should be after previous event date '{}' and location '{}'\nInvalid line: '{}'",
                     line_num, event_date, event_location, previous_event_date, previous_event_location, line
                 )
             }
+            Self::DateRangeNotSet { line_num, line } => {
+                format!(
+                    "Line {}\nFound an event date but we haven't set the date range to compare it to\nInvalid Line '{}'",
+                    line_num, line
+                )
+            }
+
             _ => todo!(),
-        }
+        });
+        s
     }
 }
 
@@ -165,9 +189,9 @@ enum EventLineType {
     /// Header of a new regional section, "### Virtual", "### Asia"...
     EventRegionHeader(String),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
-    EventDateLocationGroupLink(EventDateLocation),
+    EventDateLocationGroup(EventDateLocation),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
-    EventNameLink,
+    EventName,
     /// End of the event section "If you are running a Rust event please add..."
     EndEventSection,
     /// A line we don't recognize - should only be lines that are not within the event section
@@ -194,12 +218,12 @@ impl FromStr for EventLineType {
             }
             s if EVENT_DATE_LOCATION_RE.is_match(s) => {
                 let (date, location) = Self::extract_date_location_group(s)?;
-                Self::EventDateLocationGroupLink(EventDateLocation {
+                Self::EventDateLocationGroup(EventDateLocation {
                     date,
                     location: location.to_owned(),
                 })
             }
-            s if EVENT_NAME_LINK_RE.is_match(s) => Self::EventNameLink,
+            s if EVENT_NAME_LINK_RE.is_match(s) => Self::EventName,
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
             s => Self::Unrecognized(s.to_owned()),
         };
@@ -211,14 +235,16 @@ impl FromStr for EventLineType {
 impl fmt::Display for EventLineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Self::Newline => "Newline",
-            Self::StartEventSection => "StartEventSection",
-            Self::EventsDateRange(start, end) => &format!("EventsDateRange({}, {})", start, end),
-            Self::EventRegionHeader(region) => &format!("EventRegionHeader({})", region),
-            Self::EventDateLocationGroupLink(_event_date_location) => "EventDateLocationGroupLink", // TODO: fix this
-            Self::EventNameLink => "EventNameLink",
-            Self::EndEventSection => "EndEventSection",
-            Self::Unrecognized(line) => "Unrecognized",
+            Self::Newline => NEWLINE_TYPE,
+            Self::StartEventSection => START_EVENT_SECTION_TYPE,
+            Self::EventsDateRange(start, end) => {
+                &format!("{}({}, {})", EVENTS_DATE_RANGE_TYPE, start, end)
+            }
+            Self::EventRegionHeader(region) => &format!("{}({})", EVENT_REGION_HEADER_TYPE, region),
+            Self::EventDateLocationGroup(_event_date_location) => EVENT_DATE_LOCATION_GROUP_TYPE, // TODO: fix this
+            Self::EventName => EVENT_NAME_TYPE,
+            Self::EndEventSection => END_EVENT_SECTION_TYPE,
+            Self::Unrecognized(line) => UNRECOGNIZED_TYPE,
         };
         write!(f, "{}", s)
     }
@@ -435,6 +461,7 @@ impl EventSectionLinter {
     /// Handler before we are in the events section. Accepts all lines and just continues until we hit the event section
     fn handle_pre_events(&mut self, line_num: usize, line: &str) -> Result<(), LintError> {
         // TODO: fix this line type logic, maybe a hint for how to parse the line?
+        // TODO: for now, extract this call into read_line
         let line_type = line.parse::<EventLineType>()?;
         debug!("Parsed line #{} '{}' as '{:?}'", line_num, line, line_type);
 
@@ -471,6 +498,10 @@ impl EventSectionLinter {
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
                 line: line.to_owned(),
+                expected_line_types: vec![
+                    NEWLINE_TYPE.to_string(),
+                    EVENTS_DATE_RANGE_TYPE.to_string(),
+                ],
             }),
         }
     }
@@ -500,6 +531,11 @@ impl EventSectionLinter {
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
                 line: line.to_owned(),
+                expected_line_types: vec![
+                    NEWLINE_TYPE.to_string(),
+                    EVENT_REGION_HEADER_TYPE.to_string(),
+                    END_EVENTS_SECTION.to_string(),
+                ],
             }),
         }
     }
@@ -513,7 +549,7 @@ impl EventSectionLinter {
         debug!("Parsed line #{} '{}' as '{:?}'", line_num, line, line_type);
 
         match line_type {
-            EventLineType::EventDateLocationGroupLink(event_date_location) => {
+            EventLineType::EventDateLocationGroup(event_date_location) => {
                 // validate event is within date range
                 if let Some(date_range) = &self.event_date_range {
                     if (event_date_location.date < date_range.0)
@@ -570,6 +606,10 @@ impl EventSectionLinter {
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
                 line: line.to_owned(),
+                expected_line_types: vec![
+                    EVENT_DATE_LOCATION_GROUP_TYPE.to_string(),
+                    NEWLINE_TYPE.to_string(),
+                ],
             }),
         }
     }
@@ -583,7 +623,7 @@ impl EventSectionLinter {
         debug!("Parsed line #{} '{}' as '{:?}'", line_num, line, line_type);
 
         match line_type {
-            EventLineType::EventNameLink => {
+            EventLineType::EventName => {
                 self.linter_state = self.linter_state.next()?;
                 Ok(())
             }
@@ -592,6 +632,7 @@ impl EventSectionLinter {
                 linter_state: self.linter_state.to_string(),
                 line_type: line_type.to_string(),
                 line: line.to_owned(),
+                expected_line_types: vec![EVENT_NAME_TYPE.to_string()],
             }),
         }
     }
