@@ -21,7 +21,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut event_linter = EventSectionLinter::default();
     match event_linter.lint(&md) {
         Ok(_) => info!("LGTM!"),
-        // TODO: switch from debug to display when we make good error messages
         Err(e) => error!("{}", e),
     }
 
