@@ -1,9 +1,10 @@
 use core::fmt;
-use std::{error::Error, fmt::Display, str::FromStr, sync::LazyLock};
+use std::{fmt::Display, str::FromStr, sync::LazyLock};
 
 use chrono::{NaiveDate, ParseError};
 use log::{debug, error};
 use regex::Regex;
+use url::Url;
 
 /// Lines we expect to match exactly
 const START_EVENTS_SECTION: &str = "## Upcoming Events";
@@ -29,6 +30,7 @@ const EVENT_NAME_TYPE: &str = "EventName";
 const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
 const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
+/// Regex for extracting newsletter date range, e.g. "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
 static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     let re_str = format!(
         r"{} ({}) - ({})",
@@ -37,13 +39,19 @@ static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&re_str).expect("Failed to compile regex!")
 });
 
+/// Regex for event date location lines, e.g. " * 2024-10-24 | Virtual | [Women in Rust](h://www.meetup.com/women-in-rust/)"
 static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     let re_str = format!(r"\* ({}) \| (.*) \| (.*)", DATE_RE_STR);
     Regex::new(&re_str).expect("Failed to compile regex!")
 });
 
+/// Regex for event names, e.g. "* [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https..."
 static EVENT_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"    \* \[\*\*.*\*\*\]\(.*\)").expect("Failed to compile regex!"));
+    LazyLock::new(|| Regex::new(r"    \* (.+)").expect("Failed to compile regex!"));
+
+// TODO: some lines have multiple links together, should capture all of them
+static MD_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[.+\]\((.+)\)").expect("Failed to compile regex!"));
 
 // TODO:
 // - lint actual line contents (like everything is formatted strictly)
@@ -91,7 +99,7 @@ pub enum LintError {
     /// Top level error to return to main if we find any errors
     LintFailed,
     /// An invalid url in our events
-    InvalidUrl,
+    InvalidUrl(url::ParseError),
 }
 
 impl Display for LintError {
@@ -207,7 +215,10 @@ impl FromStr for EventLineType {
                     location: location.to_owned(),
                 })
             }
-            s if s.starts_with(EVENT_NAME_HINT) => Self::EventName, // TODO: validate
+            s if s.starts_with(EVENT_NAME_HINT) => {
+                Self::validate_event_name(s)?;
+                Self::EventName
+            }
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
             s => Self::Unrecognized,
         };
@@ -235,36 +246,45 @@ impl fmt::Display for EventLineType {
 }
 
 impl EventLineType {
+    fn map_regex_error(regex: &Regex) -> LintError {
+        LintError::RegexError {
+            regex_string: regex.as_str().to_owned(),
+        }
+    }
+
+    fn map_chrono_parse_error(chrono_error: ParseError) -> LintError {
+        LintError::DateParseError { chrono_error }
+    }
+
+    // TODO: make these validate more
     fn extract_date_range(line: &str) -> Result<(NaiveDate, NaiveDate), LintError> {
         let re = &*EVENT_DATE_RANGE_RE;
-        let captures = re.captures(line).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
+        let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
         debug!("Captured: '{:?}'", &captures);
 
-        let start_capture = captures.get(1).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
-
-        let end_capture = captures.get(2).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
+        let start_capture = captures
+            .get(1)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
+        let end_capture = captures
+            .get(2)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
 
         let start_parsed = start_capture
-            .as_str()
             .parse::<NaiveDate>()
-            .map_err(|e| LintError::DateParseError { chrono_error: e })?;
+            .map_err(Self::map_chrono_parse_error)?;
 
         let end_parsed = end_capture
-            .as_str()
             .parse::<NaiveDate>()
-            .map_err(|e| LintError::DateParseError { chrono_error: e })?;
+            .map_err(Self::map_chrono_parse_error)?;
 
         Ok((start_parsed, end_parsed))
     }
 
     fn extract_region_header(line: &str) -> Result<&str, LintError> {
+        // TODO: match region against known list
         let region = line
             .strip_prefix(EVENT_REGION_HEADER)
             .ok_or(LintError::ParseError)?;
@@ -274,41 +294,64 @@ impl EventLineType {
 
     fn extract_date_location_group(line: &str) -> Result<(NaiveDate, &str), LintError> {
         let re = &*EVENT_DATE_LOCATION_RE;
-        let captures = re.captures(line).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
+        let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
         debug!("Captured: '{:?}'", &captures);
 
         // get our required data, the date and location
-        let date_capture = captures.get(1).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
+        let date_capture = captures
+            .get(1)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
 
-        let location_capture = captures.get(2).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
+        let location_capture = captures
+            .get(2)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
 
         let date_parsed = date_capture
-            .as_str()
             .parse::<NaiveDate>()
-            .map_err(|e| LintError::DateParseError { chrono_error: e })?;
-
-        let location = location_capture.as_str();
+            .map_err(Self::map_chrono_parse_error)?;
 
         // now we will validate the rest of the line with the group names + links. We may have more than one here as well
+        let links_capture = captures.get(3).ok_or_else(|| Self::map_regex_error(re))?;
 
-        // let links_capture = captures.get(3).ok_or_else(|| LintError::RegexError {
-        //     regex_string: re.as_str().to_owned(),
-        // })?;
+        let links_capture = links_capture.as_str();
+        Self::validate_markdown_url(links_capture)?;
 
-        // let links_capture = links_capture.as_str();
-
-        Ok((date_parsed, location))
+        Ok((date_parsed, location_capture))
     }
 
-    fn validate_url(url: &str) -> Result<(), LintError> {
-        todo!()
+    fn validate_event_name(line: &str) -> Result<(), LintError> {
+        let re = &*EVENT_NAME_RE;
+        let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
+        debug!("Captured: '{:?}'", &captures);
+
+        let link = captures
+            .get(1)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
+        Self::validate_markdown_url(link)?;
+
+        Ok(())
+    }
+
+    fn validate_markdown_url(url: &str) -> Result<(), LintError> {
+        let re = &*MD_LINK_RE;
+        let capture = re.captures(url).ok_or_else(|| LintError::RegexError {
+            regex_string: re.as_str().to_owned(),
+        })?;
+
+        let url = capture
+            .get(1)
+            .ok_or_else(|| LintError::RegexError {
+                regex_string: re.as_str().to_owned(),
+            })?
+            .as_str();
+
+        Url::parse(url).map_err(LintError::InvalidUrl)?;
+
+        Ok(())
     }
 }
 
@@ -414,7 +457,7 @@ impl EventSectionLinter {
                     // we don't care about any errors before the event section, which we expect a lot of because it's
                     // not modeled in our linter
                     if self.linter_state != LinterState::PreEvents {
-                        error!("Linter Error:\n{}\nCaused by line #{}: '{}'", e, i, line);
+                        error!("Linter Error:\n{}\nCaused by line #{}: '{}'\n", e, i, line);
 
                         if !has_error {
                             has_error = true;
