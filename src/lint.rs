@@ -6,6 +6,9 @@ use log::{debug, error};
 use regex::Regex;
 use url::Url;
 
+/// Unwrap message when compiling regexes
+const REGEX_FAIL: &str = "Failed to compile regex!";
+
 /// Lines we expect to match exactly
 const START_EVENTS_SECTION: &str = "## Upcoming Events";
 const EVENT_REGION_HEADER: &str = "### ";
@@ -13,8 +16,7 @@ const END_EVENTS_SECTION: &str = "If you are running a Rust event please add it 
 
 /// Hints for what type of line we are parsing - this helps us generate a bit better error messages
 const EVENTS_DATE_RANGE_HINT: &str = "Rusty Events between";
-const EVENT_DATE_LOCATION_GROUP_HINT: &str = "* ";
-const EVENT_NAME_HINT: &str = "    * ";
+const EVENT_NAME_HINT: &str = "    * [**";
 
 /// Regex for grabbing timestamps - we use chrono to parse this and do the actual validation
 const DATE_RE_STR: &str = r"\d{4}-\d{1,2}-\d{1,2}";
@@ -30,28 +32,44 @@ const EVENT_NAME_TYPE: &str = "EventName";
 const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
 const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
+/// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
+const REGIONS: [&str; 5] = ["Virtual", "Asia", "Europe", "North America", "Oceania"];
+
+/// Regex capture group names
+const START_DATE: &str = "start_date";
+const END_DATE: &str = "end_date";
+const DATE: &str = "date";
+const LOCATION: &str = "location";
+const GROUP_URLS: &str = "group_urls";
+
 /// Regex for extracting newsletter date range, e.g. "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
 static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    let re_str = format!(
-        r"{} ({}) - ({})",
-        EVENTS_DATE_RANGE_HINT, DATE_RE_STR, DATE_RE_STR
-    );
-    Regex::new(&re_str).expect("Failed to compile regex!")
+    Regex::new(&format!(
+        r"{} (?<{}>{}) - (?<{}>{})",
+        EVENTS_DATE_RANGE_HINT, START_DATE, DATE_RE_STR, END_DATE, DATE_RE_STR
+    ))
+    .expect(REGEX_FAIL)
 });
 
-/// Regex for event date location lines, e.g. " * 2024-10-24 | Virtual | [Women in Rust](h://www.meetup.com/women-in-rust/)"
+/// Regex for event date location line hint
+static EVENT_DATE_LOCATION_HINT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"\* {}", DATE_RE_STR)).expect(REGEX_FAIL));
+/// Regex for event date location lines, e.g. " * 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)"
 static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    let re_str = format!(r"\* ({}) \| (.*) \| (.*)", DATE_RE_STR);
-    Regex::new(&re_str).expect("Failed to compile regex!")
+    Regex::new(&format!(
+        r"\* (?<{}>{}) \| (?<{}>.+) \| (?<{}>.+)",
+        DATE, DATE_RE_STR, LOCATION, GROUP_URLS
+    ))
+    .expect(REGEX_FAIL)
 });
 
 /// Regex for event names, e.g. "* [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https..."
 static EVENT_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"    \* (.+)").expect("Failed to compile regex!"));
+    LazyLock::new(|| Regex::new(r"    \* (.+)").expect(REGEX_FAIL));
 
 // TODO: some lines have multiple links together, should capture all of them
 static MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[.+\]\((.+)\)").expect("Failed to compile regex!"));
+    LazyLock::new(|| Regex::new(r"\[.+\]\((.+)\)").expect(REGEX_FAIL));
 
 // TODO:
 // - lint actual line contents (like everything is formatted strictly)
@@ -63,7 +81,7 @@ static MD_LINK_RE: LazyLock<Regex> =
 // - validate urls
 // - check for duplicated links
 
-/// An error linting - this error should provide enough information by itself to be useful to a user
+/// An error linting - this error should provide enough information by itself to be useful to a user (one would hope)
 #[derive(Debug)]
 pub enum LintError {
     InvalidStateChange {
@@ -100,6 +118,8 @@ pub enum LintError {
     LintFailed,
     /// An invalid url in our events
     InvalidUrl(url::ParseError),
+    /// A region header (Virtual, Europe, etc) we do not recognize
+    UnknownRegion(String),
 }
 
 impl Display for LintError {
@@ -149,10 +169,17 @@ impl Display for LintError {
             Self::RegexError { regex_string } => {
                 format!("Line does not match regex '{}'", regex_string)
             }
+            Self::DateParseError { chrono_error } => {
+                format!("Error parsing date: '{}'", chrono_error)
+            }
             Self::ParseError => "Parse error".to_owned(), // TODO: is this needed?
             Self::UnexpectedEnd => "Reached unexpected end of file".to_owned(),
             Self::LintFailed => "Lint failed! See above for error details".to_owned(),
-            _ => todo!(),
+            Self::InvalidUrl(e) => format!("URL parsing error: '{}'", e),
+            Self::UnknownRegion(region) => format!(
+                "Found unknown region: '{}'\nExpected one of '{:?}'",
+                region, REGIONS
+            ),
         };
 
         write!(f, "{}", error_msg)
@@ -196,18 +223,16 @@ impl FromStr for EventLineType {
         // TODO: add validation
         let parsed = match s {
             _ if s.is_empty() => Self::Newline,
-            _ if s.starts_with(START_EVENTS_SECTION) => Self::StartEventSection,
+            _ if s == START_EVENTS_SECTION => Self::StartEventSection,
             s if s.starts_with(EVENTS_DATE_RANGE_HINT) => {
                 let parsed_time_range = Self::extract_date_range(s)?;
                 Self::EventsDateRange(parsed_time_range.0, parsed_time_range.1)
             }
             s if s.starts_with(EVENT_REGION_HEADER) => {
-                // TODO: validate regions against list of known regions
-                let region = Self::extract_region_header(s)?;
+                let region = Self::extract_and_validate_region_header(s)?;
                 Self::EventRegionHeader(region.to_owned())
             }
-            s if s.starts_with(EVENT_DATE_LOCATION_GROUP_HINT) => {
-                // TODO: move this hint to be regex?
+            s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
                 // TODO: validate
                 let (date, location) = Self::extract_date_location_group(s)?;
                 Self::EventDateLocationGroup(EventDateLocation {
@@ -216,11 +241,12 @@ impl FromStr for EventLineType {
                 })
             }
             s if s.starts_with(EVENT_NAME_HINT) => {
+                // TODO: validate
                 Self::validate_event_name(s)?;
                 Self::EventName
             }
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
-            s => Self::Unrecognized,
+            _ => Self::Unrecognized,
         };
 
         Ok(parsed)
@@ -256,7 +282,6 @@ impl EventLineType {
         LintError::DateParseError { chrono_error }
     }
 
-    // TODO: make these validate more
     fn extract_date_range(line: &str) -> Result<(NaiveDate, NaiveDate), LintError> {
         let re = &*EVENT_DATE_RANGE_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
@@ -264,11 +289,12 @@ impl EventLineType {
         debug!("Captured: '{:?}'", &captures);
 
         let start_capture = captures
-            .get(1)
+            .name(START_DATE)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
+
         let end_capture = captures
-            .get(2)
+            .name(END_DATE)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
@@ -283,13 +309,17 @@ impl EventLineType {
         Ok((start_parsed, end_parsed))
     }
 
-    fn extract_region_header(line: &str) -> Result<&str, LintError> {
-        // TODO: match region against known list
+    /// Extracts and validates the region is an expected one in a region header (e.g. "### Virtual")
+    fn extract_and_validate_region_header(line: &str) -> Result<&str, LintError> {
         let region = line
             .strip_prefix(EVENT_REGION_HEADER)
             .ok_or(LintError::ParseError)?;
 
-        Ok(region)
+        if !REGIONS.contains(&region) {
+            Err(LintError::UnknownRegion(region.to_owned()))
+        } else {
+            Ok(region)
+        }
     }
 
     fn extract_date_location_group(line: &str) -> Result<(NaiveDate, &str), LintError> {
@@ -300,12 +330,12 @@ impl EventLineType {
 
         // get our required data, the date and location
         let date_capture = captures
-            .get(1)
+            .name(DATE)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
         let location_capture = captures
-            .get(2)
+            .name(LOCATION)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
@@ -314,9 +344,11 @@ impl EventLineType {
             .map_err(Self::map_chrono_parse_error)?;
 
         // now we will validate the rest of the line with the group names + links. We may have more than one here as well
-        let links_capture = captures.get(3).ok_or_else(|| Self::map_regex_error(re))?;
+        let links_capture = captures
+            .name(GROUP_URLS)
+            .ok_or_else(|| Self::map_regex_error(re))?
+            .as_str();
 
-        let links_capture = links_capture.as_str();
         Self::validate_markdown_url(links_capture)?;
 
         Ok((date_parsed, location_capture))
