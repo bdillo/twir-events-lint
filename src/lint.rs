@@ -125,6 +125,8 @@ impl fmt::Display for LintError {
     }
 }
 
+impl std::error::Error for LintError {}
+
 /// Overall state of the linter, keeps track of what "section" we are in
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinterState {

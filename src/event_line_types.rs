@@ -91,7 +91,7 @@ impl EventDateLocation {
 }
 
 /// The type of a given line of text in the event section
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum EventLineType {
     /// A newline
     Newline,
@@ -280,6 +280,91 @@ impl EventLineType {
 
         Url::parse(url).map_err(LintError::InvalidUrl)?;
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn test_newline() -> TestResult {
+        // `lines()` strips newlines for us, so an empty string == newline
+        let line = "";
+        let parsed = line.parse::<EventLineType>()?;
+        assert_eq!(parsed, EventLineType::Newline);
+        Ok(())
+    }
+
+    #[test]
+    fn test_start_events_section() -> TestResult {
+        let line = "## Upcoming Events";
+        let parsed = line.parse::<EventLineType>()?;
+        assert_eq!(parsed, EventLineType::StartEventSection);
+        Ok(())
+    }
+
+    #[test]
+    fn test_events_date_range() -> TestResult {
+        let line = "Rusty Events between 2024-10-23 - 2024-11-20 🦀";
+        let parsed = line.parse::<EventLineType>()?;
+
+        let expected = EventLineType::EventsDateRange(
+            "2024-10-23".parse::<NaiveDate>()?,
+            "2024-11-20".parse::<NaiveDate>()?,
+        );
+
+        assert_eq!(parsed, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_event_region_header() -> TestResult {
+        let line = "### Virtual";
+        let parsed = line.parse::<EventLineType>()?;
+        let expected = EventLineType::EventRegionHeader("Virtual".to_owned());
+        assert_eq!(parsed, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_event_date_location_group() -> TestResult {
+        let line =
+            "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
+        let parsed = line.parse::<EventLineType>()?;
+
+        let expected = EventLineType::EventDateLocationGroup(EventDateLocation {
+            date: "2024-10-24".parse::<NaiveDate>()?,
+            location: "Virtual".to_owned(),
+        });
+
+        assert_eq!(parsed, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_event_name() -> TestResult {
+        let line = "    * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https://www.meetup.com/women-in-rust/events/303213835/)";
+        let parsed = line.parse::<EventLineType>()?;
+        assert_eq!(parsed, EventLineType::EventName);
+        Ok(())
+    }
+
+    #[test]
+    fn test_end_event_section() -> TestResult {
+        let line = "If you are running a Rust event please add it to the [calendar] to get";
+        let parsed = line.parse::<EventLineType>()?;
+        assert_eq!(parsed, EventLineType::EndEventSection);
+        Ok(())
+    }
+
+    #[test]
+    fn test_unrecognized() -> TestResult {
+        let line = "some line with words and things";
+        let parsed = line.parse::<EventLineType>()?;
+        assert_eq!(parsed, EventLineType::Unrecognized);
         Ok(())
     }
 }
