@@ -21,7 +21,8 @@ use crate::event_line_types::{
 // - make sure each location in virtual section starts with "virtual"
 
 /// An error linting - this error should provide enough information by itself to be useful to a user (one would hope)
-#[derive(Debug)]
+// TODO: probably split this into linter logic errors (like invalid state transitions) and parsing/validation errors
+#[derive(Debug, PartialEq, Eq)]
 pub enum LintError {
     InvalidStateChange {
         from: String,
@@ -145,6 +146,10 @@ pub enum LinterState {
 }
 
 impl LinterState {
+    fn new() -> Self {
+        Self::PreEvents
+    }
+
     fn next(&self) -> Result<Self, LintError> {
         // TODO: does this really make sense? There is branching in the states so this should be modeled differently
         match self {
@@ -208,7 +213,7 @@ pub struct EventSectionLinter {
 impl Default for EventSectionLinter {
     fn default() -> Self {
         Self {
-            linter_state: LinterState::PreEvents,
+            linter_state: LinterState::new(),
             event_date_range: None,
             current_region: None,
             previous_event: None,
@@ -219,7 +224,6 @@ impl Default for EventSectionLinter {
 impl EventSectionLinter {
     pub fn lint(&mut self, md: &str) -> Result<(), LintError> {
         let lines: Vec<&str> = md.lines().collect();
-        let mut has_error = false;
         let mut error_count = 0;
 
         for (i, line) in lines.iter().enumerate() {
@@ -228,24 +232,23 @@ impl EventSectionLinter {
                 Err(e) => {
                     // we don't care about any errors before the event section, which we expect a lot of because it's
                     // not modeled in our linter
-                    if self.linter_state != LinterState::PreEvents {
-                        error!("Linter Error:\n{}\nCaused by line #{}: '{}'\n", e, i, line);
+                    // TODO: clean this up, we are just assuming all headers ("###") are regions, which is the source of the errors
+                    if self.linter_state == LinterState::PreEvents {
+                        continue;
+                    }
 
-                        if !has_error {
-                            has_error = true;
-                        }
+                    error!("Linter Error:\n{}\nCaused by line #{}: '{}'\n", e, i, line);
 
-                        // attempt to continue to parse, this could print out a bunch of errors in some cases
-                        self.linter_state = self.linter_state.next()?;
+                    // attempt to continue to parse, this could print out a bunch of errors in some cases
+                    self.linter_state = self.linter_state.next()?;
 
-                        error_count += 1;
+                    error_count += 1;
 
-                        // if we reach this many errors something has probably gone very wrong, so just exit early
-                        // rather than overwhelming the output with more error messages
-                        if error_count == 10 {
-                            error!("Reached our maximum error limit, bailing");
-                            return Err(LintError::LintFailed);
-                        }
+                    // if we reach this many errors something has probably gone very wrong, so just exit early
+                    // rather than overwhelming the output with more error messages
+                    if error_count == 10 {
+                        error!("Reached our maximum error limit, bailing");
+                        return Err(LintError::LintFailed);
                     }
                 }
             }
@@ -255,7 +258,7 @@ impl EventSectionLinter {
             return Err(LintError::UnexpectedEnd);
         }
 
-        if has_error {
+        if error_count > 0 {
             Err(LintError::LintFailed)
         } else {
             Ok(())
@@ -425,5 +428,41 @@ impl EventSectionLinter {
                 expected_line_types: vec![EVENT_NAME_TYPE.to_string()],
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn build_event_section(body_to_add: Option<&str>) -> String {
+        let mut text = "some pre events section text\n".to_owned();
+        text.push_str("## Upcoming Events\n\n");
+        // just pushing each line separately to make it a little neater looking here, rather than one huge string literal
+        text.push_str("Rusty Events between 2024-10-23 - 2024-11-20 🦀\n\n");
+        text.push_str("### Virtual\n");
+        text.push_str(
+            "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)\n",
+        );
+        text.push_str("    * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https://www.meetup.com/women-in-rust/events/303213835/)\n");
+        text.push('\n');
+
+        if let Some(lines) = body_to_add {
+            text.push_str(lines);
+        }
+
+        text.push_str("If you are running a Rust event please add it to the [calendar] to get\n");
+        text.push_str("it mentioned here. Please remember to add a link to the event too.\n");
+
+        text
+    }
+
+    #[test]
+    fn test_valid_event_section() -> TestResult {
+        let mut linter = EventSectionLinter::default();
+        let text = build_event_section(None);
+        Ok(linter.lint(&text)?)
     }
 }

@@ -56,7 +56,7 @@ static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Regex for event date location line hint
 static EVENT_DATE_LOCATION_HINT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!(r"\* {}", DATE_RE_STR)).expect(REGEX_FAIL));
-/// Regex for event date location lines, e.g. " * 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)"
+/// Regex for event date location lines, e.g. "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)"
 static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         r"\* (?<{}>{}) \| (?<{}>.+) \| (?<{}>.+)",
@@ -365,6 +365,14 @@ mod test {
         let line = "some line with words and things";
         let parsed = line.parse::<EventLineType>()?;
         assert_eq!(parsed, EventLineType::Unrecognized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_region_header() -> TestResult {
+        let line = "### Pangea";
+        let parsed = line.parse::<EventLineType>();
+        assert_eq!(parsed, Err(LintError::UnknownRegion("Pangea".to_owned())));
         Ok(())
     }
 }
