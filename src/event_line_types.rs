@@ -1,85 +1,11 @@
-use std::{fmt, str::FromStr, sync::LazyLock};
+use std::{fmt, str::FromStr};
 
 use chrono::{NaiveDate, ParseError};
 use log::{debug, warn};
 use regex::Regex;
 use url::Url;
 
-use crate::lint::LintError;
-
-/// Unwrap message when compiling regexes
-const REGEX_FAIL: &str = "Failed to compile regex!";
-
-/// Lines we expect to match exactly
-const START_EVENTS_SECTION: &str = "## Upcoming Events";
-const EVENT_REGION_HEADER: &str = "### ";
-pub(crate) const END_EVENTS_SECTION: &str =
-    "If you are running a Rust event please add it to the [calendar]";
-
-/// Hints for what type of line we are parsing - this helps us generate a bit better error messages
-const EVENTS_DATE_RANGE_HINT: &str = "Rusty Events between";
-const EVENT_NAME_HINT: &str = "    * [**";
-
-/// Regex for grabbing timestamps - we use chrono to parse this and do the actual validation
-const DATE_RE_STR: &str = r"\d{4}-\d{1,2}-\d{1,2}";
-
-/// Line "types" in the event section. We use this in several different stringy contexts, so just hardcode the strings here
-/// See EventLineType for a description of each type
-pub(crate) const NEWLINE_TYPE: &str = "Newline";
-pub(crate) const START_EVENT_SECTION_TYPE: &str = "StartEventSection";
-pub(crate) const EVENTS_DATE_RANGE_TYPE: &str = "EventsDateRange";
-pub(crate) const EVENT_REGION_HEADER_TYPE: &str = "EventRegionHeader";
-pub(crate) const EVENT_DATE_LOCATION_GROUP_TYPE: &str = "EventDateLocationGroup";
-pub(crate) const EVENT_NAME_TYPE: &str = "EventName";
-pub(crate) const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
-pub(crate) const UNRECOGNIZED_TYPE: &str = "Unrecognized";
-
-/// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
-pub(crate) const REGIONS: [&str; 5] = ["Virtual", "Asia", "Europe", "North America", "Oceania"];
-
-/// Regex capture group names
-const START_DATE: &str = "start_date";
-const END_DATE: &str = "end_date";
-const DATE: &str = "date";
-const LOCATION: &str = "location";
-const GROUP_URLS: &str = "group_urls";
-
-/// Regex for extracting newsletter date range, e.g. "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
-static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"{} (?<{}>{}) - (?<{}>{})",
-        EVENTS_DATE_RANGE_HINT, START_DATE, DATE_RE_STR, END_DATE, DATE_RE_STR
-    ))
-    .expect(REGEX_FAIL)
-});
-
-/// Regex for event date location line hint
-static EVENT_DATE_LOCATION_HINT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(&format!(r"\* {}", DATE_RE_STR)).expect(REGEX_FAIL));
-/// Regex for event date location lines, e.g. "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)"
-static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(
-        r"\* (?<{}>{}) \| (?<{}>.+) \| (?<{}>.+)",
-        DATE, DATE_RE_STR, LOCATION, GROUP_URLS
-    ))
-    .expect(REGEX_FAIL)
-});
-
-/// Delimiter in lines like the following:
-///  * 2024-10-24 | Virtual (Berlin, DE) | [OpenTechSchool Berlin](https://berline.rs/) + [Rust Berlin](https://www.meetup.com/rust-berlin/)
-const EVENT_DATE_LOCATION_LINK_DELIM: &str = " + ";
-/// Delimiter for multiple event links like:
-///     * [**Rust Hack and Learn**](https://meet.jit.si/RustHackAndLearnBerlin) | [**Mirror: Rust Hack n Learn Meetup**](https://www.meetup.com/rust-berlin/events/298633271/)
-const EVENT_NAME_LINK_DELIM: &str = " | ";
-
-/// Regex for event names, e.g. "* [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https..."
-static EVENT_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"    \* (.+)").expect(REGEX_FAIL));
-
-/// Regex for validating a markdown link like "[some link](https://www.rust-lang.org/)", this is meant to be very strict and it
-/// captures the url as the capture group
-static MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[[^\]]+\]\(([^\)]+)\)$").expect(REGEX_FAIL));
+use crate::{constants::*, lint::LintError, regex::*};
 
 /// An event's date and location. Used to ensure our dates are ordered correctly, first by date, then by location
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

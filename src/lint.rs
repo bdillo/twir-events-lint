@@ -3,10 +3,9 @@ use std::fmt;
 use chrono::{NaiveDate, ParseError};
 use log::{debug, error};
 
-use crate::event_line_types::{
-    EventDateLocation, EventLineType, END_EVENTS_SECTION, EVENTS_DATE_RANGE_TYPE,
-    EVENT_DATE_LOCATION_GROUP_TYPE, EVENT_NAME_TYPE, EVENT_REGION_HEADER_TYPE, NEWLINE_TYPE,
-    REGIONS,
+use crate::{
+    constants::*,
+    event_line_types::{EventDateLocation, EventLineType},
 };
 
 // TODO:
