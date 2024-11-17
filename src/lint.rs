@@ -237,7 +237,12 @@ impl EventSectionLinter {
                         continue;
                     }
 
-                    error!("Linter Error:\n{}\nCaused by line #{}: '{}'\n", e, i, line);
+                    error!(
+                        "Linter Error:\n{}\nCaused by line #{}: '{}'\n",
+                        e,
+                        i + 1,
+                        line
+                    );
 
                     // attempt to continue to parse, this could print out a bunch of errors in some cases
                     self.linter_state = self.linter_state.next()?;

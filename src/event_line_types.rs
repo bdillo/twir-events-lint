@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr, sync::LazyLock};
 
 use chrono::{NaiveDate, ParseError};
-use log::debug;
+use log::{debug, warn};
 use regex::Regex;
 use url::Url;
 
@@ -65,13 +65,21 @@ static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect(REGEX_FAIL)
 });
 
+/// Delimiter in lines like the following:
+///  * 2024-10-24 | Virtual (Berlin, DE) | [OpenTechSchool Berlin](https://berline.rs/) + [Rust Berlin](https://www.meetup.com/rust-berlin/)
+const EVENT_DATE_LOCATION_LINK_DELIM: &str = " + ";
+/// Delimiter for multiple event links like:
+///     * [**Rust Hack and Learn**](https://meet.jit.si/RustHackAndLearnBerlin) | [**Mirror: Rust Hack n Learn Meetup**](https://www.meetup.com/rust-berlin/events/298633271/)
+const EVENT_NAME_LINK_DELIM: &str = " | ";
+
 /// Regex for event names, e.g. "* [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https..."
 static EVENT_NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"    \* (.+)").expect(REGEX_FAIL));
 
-// TODO: some lines have multiple links together, should capture all of them
+/// Regex for validating a markdown link like "[some link](https://www.rust-lang.org/)", this is meant to be very strict and it
+/// captures the url as the capture group
 static MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[.+\]\((.+)\)").expect(REGEX_FAIL));
+    LazyLock::new(|| Regex::new(r"^\[[^\]]+\]\(([^\)]+)\)$").expect(REGEX_FAIL));
 
 /// An event's date and location. Used to ensure our dates are ordered correctly, first by date, then by location
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -131,7 +139,7 @@ impl FromStr for EventLineType {
             }
             s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
                 // TODO: validate
-                let (date, location) = Self::extract_date_location_group(s)?;
+                let (date, location) = Self::extract_and_validate_date_location_group(s)?;
                 Self::EventDateLocationGroup(EventDateLocation {
                     date,
                     location: location.to_owned(),
@@ -219,7 +227,9 @@ impl EventLineType {
         }
     }
 
-    fn extract_date_location_group(line: &str) -> Result<(NaiveDate, &str), LintError> {
+    fn extract_and_validate_date_location_group(
+        line: &str,
+    ) -> Result<(NaiveDate, &str), LintError> {
         let re = &*EVENT_DATE_LOCATION_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
@@ -235,6 +245,7 @@ impl EventLineType {
             .name(LOCATION)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
+        // TODO: validate location formatting
 
         let date_parsed = date_capture
             .parse::<NaiveDate>()
@@ -246,7 +257,16 @@ impl EventLineType {
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
-        Self::validate_markdown_url(links_capture)?;
+        // if we have multiple links, we expect them to be delimited with ' + '
+        let links: Vec<&str> = if links_capture.contains(EVENT_DATE_LOCATION_LINK_DELIM) {
+            links_capture
+                .split(EVENT_DATE_LOCATION_LINK_DELIM)
+                .collect()
+        } else {
+            vec![links_capture]
+        };
+
+        Self::validate_markdown_urls(links)?;
 
         Ok((date_parsed, location_capture))
     }
@@ -256,29 +276,55 @@ impl EventLineType {
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
         debug!("Captured: '{:?}'", &captures);
 
-        let link = captures
+        let link_captures = captures
             .get(1)
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
-        Self::validate_markdown_url(link)?;
+
+        let links: Vec<&str> = if link_captures.contains(EVENT_NAME_LINK_DELIM) {
+            link_captures.split(EVENT_NAME_LINK_DELIM).collect()
+        } else {
+            vec![link_captures]
+        };
+
+        Self::validate_markdown_urls(links)?;
 
         Ok(())
     }
 
-    fn validate_markdown_url(url: &str) -> Result<(), LintError> {
+    fn validate_markdown_urls(urls: Vec<&str>) -> Result<(), LintError> {
         let re = &*MD_LINK_RE;
-        let capture = re.captures(url).ok_or_else(|| LintError::RegexError {
-            regex_string: re.as_str().to_owned(),
-        })?;
-
-        let url = capture
-            .get(1)
-            .ok_or_else(|| LintError::RegexError {
+        for url in urls {
+            let capture = re.captures(url).ok_or_else(|| LintError::RegexError {
                 regex_string: re.as_str().to_owned(),
-            })?
-            .as_str();
+            })?;
 
-        Url::parse(url).map_err(LintError::InvalidUrl)?;
+            debug!("Captured: '{:?}'", &capture);
+
+            // TODO: verify protocol, link doesn't have trackers if meetup
+            let url = capture
+                .get(1)
+                .ok_or_else(|| LintError::RegexError {
+                    regex_string: re.as_str().to_owned(),
+                })?
+                .as_str();
+
+            Self::validate_url(&Url::parse(url).map_err(LintError::InvalidUrl)?)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_url(url: &Url) -> Result<(), LintError> {
+        // TODO: probably make this an error just for better visibility? like getting line # in error message
+        if url.scheme() != "https" {
+            warn!(
+                "Unexpected URL protocol '{}' in url '{}'",
+                url.scheme(),
+                url
+            );
+        }
+        // TODO: check for tracker on meetup url
 
         Ok(())
     }
