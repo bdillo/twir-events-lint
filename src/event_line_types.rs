@@ -207,6 +207,7 @@ impl EventLineType {
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
+        // multiple links here should be ' | ' delimited
         let links: Vec<&str> = if link_captures.contains(EVENT_NAME_LINK_DELIM) {
             link_captures.split(EVENT_NAME_LINK_DELIM).collect()
         } else {
@@ -227,7 +228,6 @@ impl EventLineType {
 
             debug!("Captured: '{:?}'", &capture);
 
-            // TODO: verify protocol, link doesn't have trackers if meetup
             let url = capture
                 .get(1)
                 .ok_or_else(|| LintError::RegexError {
@@ -250,7 +250,18 @@ impl EventLineType {
                 url
             );
         }
-        // TODO: check for tracker on meetup url
+
+        // domain specific logic
+        if let Some(domain) = url.host() {
+            // meetup.com
+            if domain == *MEETUP_DOMAIN {
+                if let Some(query_string) = url.query() {
+                    if query_string.contains(MEETUP_TRACKER) {
+                        return Err(LintError::UrlContainsTracker(url.clone()));
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -345,6 +356,18 @@ mod test {
         let line = "### Pangea";
         let parsed = line.parse::<EventLineType>();
         assert_eq!(parsed, Err(LintError::UnknownRegion("Pangea".to_owned())));
+        Ok(())
+    }
+
+    #[test]
+    fn test_meetup_url_contains_tracker() -> TestResult {
+        let line = "    * [**My test link**](https://www.meetup.com/women-in-rust/events/303213835/?eventOrigin=group_events_list)";
+        let parsed = line.parse::<EventLineType>();
+
+        let url = Url::from_str(
+            "https://www.meetup.com/women-in-rust/events/303213835/?eventOrigin=group_events_list",
+        )?;
+        assert_eq!(parsed, Err(LintError::UrlContainsTracker(url)));
         Ok(())
     }
 }

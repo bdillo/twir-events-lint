@@ -1,3 +1,7 @@
+use std::sync::LazyLock;
+
+use url::Host;
+
 /// Lines we expect to match exactly
 pub(crate) const START_EVENTS_SECTION: &str = "## Upcoming Events";
 pub(crate) const EVENT_REGION_HEADER: &str = "### ";
@@ -21,3 +25,9 @@ pub(crate) const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
 /// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
 pub(crate) const REGIONS: [&str; 5] = ["Virtual", "Asia", "Europe", "North America", "Oceania"];
+
+/// The meetup.com domain (needs String, hence the LazyLock)
+pub(crate) static MEETUP_DOMAIN: LazyLock<Host> =
+    LazyLock::new(|| Host::Domain("www.meetup.com".to_owned()));
+/// The tracker that is sometimes included in the meetup urls
+pub(crate) const MEETUP_TRACKER: &str = "eventOrigin";

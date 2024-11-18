@@ -2,6 +2,7 @@ use std::fmt;
 
 use chrono::{NaiveDate, ParseError};
 use log::{debug, error};
+use url::Url;
 
 use crate::{
     constants::*,
@@ -10,7 +11,6 @@ use crate::{
 
 // TODO:
 // - lint actual line contents (like everything is formatted strictly)
-// - check for tracker things in urls
 // - lint for empty regions
 // - clean up errors and error messages
 // - tests
@@ -59,6 +59,7 @@ pub enum LintError {
     InvalidUrl(url::ParseError),
     /// A region header (Virtual, Europe, etc) we do not recognize
     UnknownRegion(String),
+    UrlContainsTracker(Url),
 }
 
 impl fmt::Display for LintError {
@@ -119,6 +120,7 @@ impl fmt::Display for LintError {
                 "Found unknown region: '{}'\nExpected one of '{:?}'",
                 region, REGIONS
             ),
+            Self::UrlContainsTracker(url) => format!("URL '{}' contains a tracker!", url),
         };
 
         write!(f, "{}", error_msg)
@@ -250,6 +252,7 @@ impl EventSectionLinter {
 
                     // if we reach this many errors something has probably gone very wrong, so just exit early
                     // rather than overwhelming the output with more error messages
+                    // TODO: make this a configurable arg
                     if error_count == 10 {
                         error!("Reached our maximum error limit, bailing");
                         return Err(LintError::LintFailed);
