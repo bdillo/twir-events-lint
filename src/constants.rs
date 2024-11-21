@@ -24,7 +24,14 @@ pub(crate) const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
 pub(crate) const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
 /// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
-pub(crate) const REGIONS: [&str; 5] = ["Virtual", "Asia", "Europe", "North America", "Oceania"];
+pub(crate) const REGIONS: &[&str] = &[
+    "Virtual",
+    "Africa",
+    "Asia",
+    "Europe",
+    "North America",
+    "Oceania",
+];
 
 /// The meetup.com domain (needs String, hence the LazyLock)
 pub(crate) static MEETUP_DOMAIN: LazyLock<Host> =

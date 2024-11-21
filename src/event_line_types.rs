@@ -51,7 +51,6 @@ impl FromStr for EventLineType {
     type Err = LintError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // TODO: add validation
         let parsed = match s {
             _ if s.is_empty() => Self::Newline,
             _ if s == START_EVENTS_SECTION => Self::StartEventSection,
@@ -64,7 +63,6 @@ impl FromStr for EventLineType {
                 Self::EventRegionHeader(region.to_owned())
             }
             s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
-                // TODO: validate
                 let (date, location) = Self::extract_and_validate_date_location_group(s)?;
                 Self::EventDateLocationGroup(EventDateLocation {
                     date,
@@ -72,7 +70,6 @@ impl FromStr for EventLineType {
                 })
             }
             s if s.starts_with(EVENT_NAME_HINT) => {
-                // TODO: validate
                 Self::validate_event_name(s)?;
                 Self::EventName
             }
@@ -103,16 +100,19 @@ impl fmt::Display for EventLineType {
 }
 
 impl EventLineType {
+    /// Helper for regex errors
     fn map_regex_error(regex: &Regex) -> LintError {
         LintError::RegexError {
             regex_string: regex.as_str().to_owned(),
         }
     }
 
+    /// Helper for chrono parse errors
     fn map_chrono_parse_error(chrono_error: ParseError) -> LintError {
         LintError::DateParseError { chrono_error }
     }
 
+    /// Extracts date range for the newletter, these are used to validate events fall within the given date range
     fn extract_date_range(line: &str) -> Result<(NaiveDate, NaiveDate), LintError> {
         let re = &*EVENT_DATE_RANGE_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
@@ -153,6 +153,7 @@ impl EventLineType {
         }
     }
 
+    /// Extracts date and location from events, also validates group links
     fn extract_and_validate_date_location_group(
         line: &str,
     ) -> Result<(NaiveDate, &str), LintError> {
@@ -192,11 +193,12 @@ impl EventLineType {
             vec![links_capture]
         };
 
-        Self::validate_markdown_urls(links)?;
+        Self::validate_markdown_urls(links, false)?;
 
         Ok((date_parsed, location_capture))
     }
 
+    /// Validates event names/links
     fn validate_event_name(line: &str) -> Result<(), LintError> {
         let re = &*EVENT_NAME_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
@@ -214,12 +216,15 @@ impl EventLineType {
             vec![link_captures]
         };
 
-        Self::validate_markdown_urls(links)?;
+        Self::validate_markdown_urls(links, true)?;
 
         Ok(())
     }
 
-    fn validate_markdown_urls(urls: Vec<&str>) -> Result<(), LintError> {
+    /// Validates one or more links are formatted as expected in markdown, e.g. `[My label](https://mylink.test)`
+    // TODO: don't like bool args, clean this up probably. Ok for now since this check is so simple and all the code that
+    // calls this function is right here
+    fn validate_markdown_urls(urls: Vec<&str>, check_label_is_bold: bool) -> Result<(), LintError> {
         let re = &*MD_LINK_RE;
         for url in urls {
             let capture = re.captures(url).ok_or_else(|| LintError::RegexError {
@@ -228,8 +233,21 @@ impl EventLineType {
 
             debug!("Captured: '{:?}'", &capture);
 
+            let label = capture
+                .name(LINK_LABEL)
+                .ok_or_else(|| LintError::RegexError {
+                    regex_string: re.as_str().to_owned(),
+                })?
+                .as_str();
+
+            if check_label_is_bold
+                && (&label[0..2] != "**" || &label[label.len() - 2..label.len()] != "**")
+            {
+                return Err(LintError::InvalidLinkLabel(label.to_owned()));
+            }
+
             let url = capture
-                .get(1)
+                .name(LINK)
                 .ok_or_else(|| LintError::RegexError {
                     regex_string: re.as_str().to_owned(),
                 })?
@@ -241,6 +259,7 @@ impl EventLineType {
         Ok(())
     }
 
+    /// Validates a URL is actually kind of valid and any domain-specific logic can be implemented here
     fn validate_url(url: &Url) -> Result<(), LintError> {
         // TODO: probably make this an error just for better visibility? like getting line # in error message
         if url.scheme() != "https" {
@@ -368,6 +387,18 @@ mod test {
             "https://www.meetup.com/women-in-rust/events/303213835/?eventOrigin=group_events_list",
         )?;
         assert_eq!(parsed, Err(LintError::UrlContainsTracker(url)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_non_bold_event_name() -> TestResult {
+        let line = "    * [**November Meetup*](https://www.meetup.com/join-srug/events/304166747/)";
+        let parsed = line.parse::<EventLineType>();
+
+        assert_eq!(
+            parsed,
+            Err(LintError::InvalidLinkLabel("**November Meetup*".to_owned()))
+        );
         Ok(())
     }
 }

@@ -10,12 +10,10 @@ use crate::{
 };
 
 // TODO:
-// - lint actual line contents (like everything is formatted strictly)
 // - lint for empty regions
 // - clean up errors and error messages
 // - tests
 // - add tools for adding new events
-// - validate urls
 // - check for duplicated links
 // - make sure each location in virtual section starts with "virtual"
 
@@ -59,7 +57,10 @@ pub enum LintError {
     InvalidUrl(url::ParseError),
     /// A region header (Virtual, Europe, etc) we do not recognize
     UnknownRegion(String),
+    /// URL contains a tracker that we want to strip out
     UrlContainsTracker(Url),
+    /// Invalid format for a link label, e.g. [link label](https://mylink.test)
+    InvalidLinkLabel(String),
 }
 
 impl fmt::Display for LintError {
@@ -120,7 +121,8 @@ impl fmt::Display for LintError {
                 "Found unknown region: '{}'\nExpected one of '{:?}'",
                 region, REGIONS
             ),
-            Self::UrlContainsTracker(url) => format!("URL '{}' contains a tracker!", url),
+            Self::UrlContainsTracker(url) => format!("URL '{}' contains a tracker", url),
+            Self::InvalidLinkLabel(label) => format!("Link label '{}' is invalid", label),
         };
 
         write!(f, "{}", error_msg)

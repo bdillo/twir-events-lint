@@ -16,6 +16,8 @@ pub(crate) const END_DATE: &str = "end_date";
 pub(crate) const DATE: &str = "date";
 pub(crate) const LOCATION: &str = "location";
 pub(crate) const GROUP_URLS: &str = "group_urls";
+pub(crate) const LINK_LABEL: &str = "link_label";
+pub(crate) const LINK: &str = "link";
 
 /// Regex for extracting newsletter date range, e.g. "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
 pub(crate) static EVENT_DATE_RANGE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -51,5 +53,11 @@ pub(crate) static EVENT_NAME_RE: LazyLock<Regex> =
 
 /// Regex for validating a markdown link like "[some link](https://www.rust-lang.org/)", this is meant to be very strict and it
 /// captures the url as the capture group
-pub(crate) static MD_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[[^\]]+\]\(([^\)]+)\)$").expect(REGEX_FAIL));
+pub(crate) static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        // wow! unreadable!
+        r"^\[(?<{}>[^\]]+)\]\((?<{}>[^\)]+)\)$",
+        LINK_LABEL, LINK,
+    ))
+    .expect(REGEX_FAIL)
+});
