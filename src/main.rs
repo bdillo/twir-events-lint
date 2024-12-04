@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     info!("Reading file '{}'", args.file().display());
     let md = fs::read_to_string(args.file())?;
 
-    let mut event_linter = EventSectionLinter::default();
+    let mut event_linter = EventSectionLinter::new(args.edit(), args.error_limit());
     match event_linter.lint(&md) {
         Ok(_) => info!("LGTM!"),
         Err(e) => error!("{}", e),

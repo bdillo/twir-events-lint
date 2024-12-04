@@ -1,7 +1,7 @@
 use std::fmt;
 
 use chrono::{NaiveDate, ParseError};
-use log::{debug, error};
+use log::{debug, error, info, warn};
 use url::Url;
 
 use crate::{
@@ -200,6 +200,7 @@ impl fmt::Display for LinterState {
     }
 }
 
+// TODO: keep track of newlines here, like in a counter? So we can lint for unexpected newlines between sections
 #[derive(Debug)]
 pub struct EventSectionLinter {
     /// Our current state of the linter
@@ -210,38 +211,72 @@ pub struct EventSectionLinter {
     current_region: Option<String>,
     /// The last event in our current region. Used to make sure we have our events properly sorted by date and location name
     previous_event: Option<EventDateLocation>,
-    // TODO: keep track of newlines here, like in a counter? So we can lint for unexpected newlines between sections
+    /// Whether we should make edits or not, if enabled we will print out each (potentially edited) line
+    should_edit: bool,
+    /// Maximum error count before bailing
+    error_limit: u32,
 }
 
 impl Default for EventSectionLinter {
     fn default() -> Self {
+        Self::new(false, 20)
+    }
+}
+
+impl EventSectionLinter {
+    pub fn new(should_edit: bool, error_limit: u32) -> Self {
         Self {
             linter_state: LinterState::new(),
             event_date_range: None,
             current_region: None,
             previous_event: None,
+            should_edit,
+            error_limit,
         }
     }
-}
 
-impl EventSectionLinter {
     pub fn lint(&mut self, md: &str) -> Result<(), LintError> {
         let lines: Vec<&str> = md.lines().collect();
-        let mut error_count = 0;
+        let mut error_count: u32 = 0;
+
+        let mut skip_next = false;
 
         for (i, line) in lines.iter().enumerate() {
+            if skip_next {
+                info!("Skipping line #{}:'{}'", i + 1, line);
+                skip_next = false;
+                continue;
+            }
+
             match self.read_line(i, line) {
-                Ok(_) => (),
+                Ok(_) => {
+                    // TODO: actually should probably just save our input as a String so we can re-run it through the linter
+                    if self.should_edit {
+                        println!("{}", line);
+                    }
+                }
                 Err(e) => {
                     // we don't care about any errors before the event section, which we expect a lot of because it's
                     // not modeled in our linter
                     // TODO: clean this up, we are just assuming all headers ("###") are regions, which is the source of the errors
                     if self.linter_state == LinterState::PreEvents {
+                        if self.should_edit {
+                            println!("{}", line);
+                        }
                         continue;
                     }
 
+                    // handle recoverable errors if we are editing the draft
+                    if self.should_edit {
+                        if let LintError::EventOutOfDateRange { .. } = e {
+                            info!("Removing stale event on line #{}: {}", i + 1, line);
+                            skip_next = true;
+                            continue;
+                        }
+                    }
+
                     error!(
-                        "Linter Error:\n{}\nCaused by line #{}: '{}'\n",
+                        "Linter Error:\n{}\nCaused by line #{}: '{}'",
                         e,
                         i + 1,
                         line
@@ -254,8 +289,7 @@ impl EventSectionLinter {
 
                     // if we reach this many errors something has probably gone very wrong, so just exit early
                     // rather than overwhelming the output with more error messages
-                    // TODO: make this a configurable arg
-                    if error_count == 10 {
+                    if error_count == self.error_limit {
                         error!("Reached our maximum error limit, bailing");
                         return Err(LintError::LintFailed);
                     }
