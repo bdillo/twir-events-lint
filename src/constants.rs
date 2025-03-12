@@ -31,6 +31,7 @@ pub(crate) const REGIONS: &[&str] = &[
     "Europe",
     "North America",
     "Oceania",
+    "South America",
 ];
 
 /// The meetup.com domain (needs String, hence the LazyLock)
