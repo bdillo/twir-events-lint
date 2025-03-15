@@ -1,10 +1,9 @@
-use std::{error::Error, fs};
-
 use clap::Parser;
 use log::{error, info};
-use twir_events_lint::{args::Args, lint::EventSectionLinter};
+use std::fs;
+use twir_events_lint::{args::Args, lint::EventSectionLinter, twir_reader::TwirReader};
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     let args = Args::parse();
 
     let log_level = if args.debug() {
@@ -16,13 +15,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     simple_logger::init_with_level(log_level).expect("Failed to init logger!");
 
     info!("Reading file '{}'", args.file().display());
-    let md = fs::read_to_string(args.file())?;
+    let md_contents = fs::read_to_string(args.file()).unwrap();
+    let reader = TwirReader::new(&md_contents);
 
-    let mut event_linter = EventSectionLinter::new(args.edit(), args.error_limit());
-    match event_linter.lint(&md) {
+    let mut event_linter = EventSectionLinter::new(args.error_limit());
+    match event_linter.lint(reader) {
         Ok(_) => info!("LGTM!"),
         Err(e) => error!("{}", e),
     }
-
-    Ok(())
 }

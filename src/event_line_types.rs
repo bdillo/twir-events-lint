@@ -1,11 +1,55 @@
 use std::{fmt, str::FromStr};
 
-use chrono::{NaiveDate, ParseError};
+use chrono::NaiveDate;
 use log::{debug, warn};
 use regex::Regex;
 use url::Url;
 
-use crate::{constants::*, lint::LintError, regex::*};
+use crate::{constants::*, regex::*};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LineParseError {
+    PatternNotMatched(String),
+    InvalidDate(chrono::format::ParseError),
+    InvalidUrl(url::ParseError),
+    UnknownRegion(String),
+    InvalidLinkLabel(String),
+    UrlContainsTracker(Url),
+}
+
+impl fmt::Display for LineParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::PatternNotMatched(regex_str) => {
+                    format!("failed to match regex '{}'", regex_str)
+                }
+                Self::InvalidDate(chrono_error) => chrono_error.to_string(),
+                Self::InvalidUrl(url_error) => url_error.to_string(),
+                Self::UnknownRegion(region) => format!("unknown region '{}'", region),
+                Self::InvalidLinkLabel(link_label) =>
+                    format!("invalid link label '{}'", link_label),
+                Self::UrlContainsTracker(url) => format!("url contains tracker '{}'", url),
+            }
+        )
+    }
+}
+
+impl std::error::Error for LineParseError {}
+
+impl From<chrono::format::ParseError> for LineParseError {
+    fn from(value: chrono::format::ParseError) -> Self {
+        Self::InvalidDate(value)
+    }
+}
+
+impl From<url::ParseError> for LineParseError {
+    fn from(value: url::ParseError) -> Self {
+        Self::InvalidUrl(value)
+    }
+}
 
 /// An event's date and location. Used to ensure our dates are ordered correctly, first by date, then by location
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -25,7 +69,7 @@ impl EventDateLocation {
 }
 
 /// The type of a given line of text in the event section
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum EventLineType {
     /// A newline
     Newline,
@@ -46,9 +90,7 @@ pub(crate) enum EventLineType {
 }
 
 impl FromStr for EventLineType {
-    // TODO: probably model this a bit differently. We should infer from the state of the linter what we expect the next line to be, rather than
-    // just parsing each line without this context
-    type Err = LintError;
+    type Err = LineParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parsed = match s {
@@ -101,19 +143,12 @@ impl fmt::Display for EventLineType {
 
 impl EventLineType {
     /// Helper for regex errors
-    fn map_regex_error(regex: &Regex) -> LintError {
-        LintError::RegexError {
-            regex_string: regex.as_str().to_owned(),
-        }
-    }
-
-    /// Helper for chrono parse errors
-    fn map_chrono_parse_error(chrono_error: ParseError) -> LintError {
-        LintError::DateParseError { chrono_error }
+    fn map_regex_error(regex: &Regex) -> LineParseError {
+        LineParseError::PatternNotMatched(regex.as_str().to_owned())
     }
 
     /// Extracts date range for the newletter, these are used to validate events fall within the given date range
-    fn extract_date_range(line: &str) -> Result<(NaiveDate, NaiveDate), LintError> {
+    fn extract_date_range(line: &str) -> Result<(NaiveDate, NaiveDate), LineParseError> {
         let re = &*EVENT_DATE_RANGE_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
@@ -129,25 +164,22 @@ impl EventLineType {
             .ok_or_else(|| Self::map_regex_error(re))?
             .as_str();
 
-        let start_parsed = start_capture
-            .parse::<NaiveDate>()
-            .map_err(Self::map_chrono_parse_error)?;
-
-        let end_parsed = end_capture
-            .parse::<NaiveDate>()
-            .map_err(Self::map_chrono_parse_error)?;
+        let start_parsed = start_capture.parse::<NaiveDate>()?;
+        let end_parsed = end_capture.parse::<NaiveDate>()?;
 
         Ok((start_parsed, end_parsed))
     }
 
     /// Extracts and validates the region is an expected one in a region header (e.g. "### Virtual")
-    fn extract_and_validate_region_header(line: &str) -> Result<&str, LintError> {
-        let region = line
-            .strip_prefix(EVENT_REGION_HEADER)
-            .ok_or(LintError::ParseError)?;
+    fn extract_and_validate_region_header(line: &str) -> Result<&str, LineParseError> {
+        let region =
+            line.strip_prefix(EVENT_REGION_HEADER)
+                .ok_or(LineParseError::PatternNotMatched(
+                    EVENT_REGION_HEADER.to_owned(),
+                ))?;
 
         if !REGIONS.contains(&region) {
-            Err(LintError::UnknownRegion(region.to_owned()))
+            Err(LineParseError::UnknownRegion(region.to_owned()))
         } else {
             Ok(region)
         }
@@ -156,7 +188,7 @@ impl EventLineType {
     /// Extracts date and location from events, also validates group links
     fn extract_and_validate_date_location_group(
         line: &str,
-    ) -> Result<(NaiveDate, &str), LintError> {
+    ) -> Result<(NaiveDate, &str), LineParseError> {
         let re = &*EVENT_DATE_LOCATION_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
@@ -174,9 +206,7 @@ impl EventLineType {
             .as_str();
         // TODO: validate location formatting
 
-        let date_parsed = date_capture
-            .parse::<NaiveDate>()
-            .map_err(Self::map_chrono_parse_error)?;
+        let date_parsed = date_capture.parse::<NaiveDate>()?;
 
         // now we will validate the rest of the line with the group names + links. We may have more than one here as well
         let links_capture = captures
@@ -199,7 +229,7 @@ impl EventLineType {
     }
 
     /// Validates event names/links
-    fn validate_event_name(line: &str) -> Result<(), LintError> {
+    fn validate_event_name(line: &str) -> Result<(), LineParseError> {
         let re = &*EVENT_NAME_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
         debug!("Captured: '{:?}'", &captures);
@@ -224,43 +254,42 @@ impl EventLineType {
     /// Validates one or more links are formatted as expected in markdown, e.g. `[My label](https://mylink.test)`
     // TODO: don't like bool args, clean this up probably. Ok for now since this check is so simple and all the code that
     // calls this function is right here
-    fn validate_markdown_urls(urls: Vec<&str>, check_label_is_bold: bool) -> Result<(), LintError> {
+    fn validate_markdown_urls(
+        urls: Vec<&str>,
+        check_label_is_bold: bool,
+    ) -> Result<(), LineParseError> {
         let re = &*MD_LINK_RE;
         for url in urls {
-            let capture = re.captures(url).ok_or_else(|| LintError::RegexError {
-                regex_string: re.as_str().to_owned(),
-            })?;
+            let capture = re
+                .captures(url)
+                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?;
 
             debug!("Captured: '{:?}'", &capture);
 
             let label = capture
                 .name(LINK_LABEL)
-                .ok_or_else(|| LintError::RegexError {
-                    regex_string: re.as_str().to_owned(),
-                })?
+                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
                 .as_str();
 
             if check_label_is_bold
                 && (&label[0..2] != "**" || &label[label.len() - 2..label.len()] != "**")
             {
-                return Err(LintError::InvalidLinkLabel(label.to_owned()));
+                return Err(LineParseError::InvalidLinkLabel(label.to_owned()));
             }
 
             let url = capture
                 .name(LINK)
-                .ok_or_else(|| LintError::RegexError {
-                    regex_string: re.as_str().to_owned(),
-                })?
+                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
                 .as_str();
 
-            Self::validate_url(&Url::parse(url).map_err(LintError::InvalidUrl)?)?;
+            Self::validate_url(&Url::parse(url)?)?;
         }
 
         Ok(())
     }
 
     /// Validates a URL is actually kind of valid and any domain-specific logic can be implemented here
-    fn validate_url(url: &Url) -> Result<(), LintError> {
+    fn validate_url(url: &Url) -> Result<(), LineParseError> {
         // TODO: probably make this an error just for better visibility? like getting line # in error message
         if url.scheme() != "https" {
             warn!(
@@ -276,7 +305,7 @@ impl EventLineType {
             if domain == *MEETUP_DOMAIN {
                 if let Some(query_string) = url.query() {
                     if query_string.contains(MEETUP_TRACKER) {
-                        return Err(LintError::UrlContainsTracker(url.clone()));
+                        return Err(LineParseError::UrlContainsTracker(url.clone()));
                     }
                 }
             }
@@ -374,7 +403,10 @@ mod test {
     fn test_invalid_region_header() -> TestResult {
         let line = "### Pangea";
         let parsed = line.parse::<EventLineType>();
-        assert_eq!(parsed, Err(LintError::UnknownRegion("Pangea".to_owned())));
+        assert_eq!(
+            parsed,
+            Err(LineParseError::UnknownRegion("Pangea".to_owned()))
+        );
         Ok(())
     }
 
@@ -386,7 +418,7 @@ mod test {
         let url = Url::from_str(
             "https://www.meetup.com/women-in-rust/events/303213835/?eventOrigin=group_events_list",
         )?;
-        assert_eq!(parsed, Err(LintError::UrlContainsTracker(url)));
+        assert_eq!(parsed, Err(LineParseError::UrlContainsTracker(url)));
         Ok(())
     }
 
@@ -397,7 +429,9 @@ mod test {
 
         assert_eq!(
             parsed,
-            Err(LintError::InvalidLinkLabel("**November Meetup*".to_owned()))
+            Err(LineParseError::InvalidLinkLabel(
+                "**November Meetup*".to_owned()
+            ))
         );
         Ok(())
     }
