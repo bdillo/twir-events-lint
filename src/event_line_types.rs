@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::{constants::*, regex::*};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LineParseError {
     PatternNotMatched(String),
     InvalidDate(chrono::format::ParseError),

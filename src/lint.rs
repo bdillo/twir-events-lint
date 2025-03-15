@@ -18,7 +18,7 @@ use crate::{
 // - make sure each location in virtual section starts with "virtual"
 
 /// Linter errors
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LintError<'a> {
     UnexpectedDateRange {
         line: TwirLine<'a>,
@@ -181,7 +181,7 @@ impl EventSectionLinter {
         }
     }
 
-    pub fn lint(&mut self, reader: TwirReader) -> Result<(), LintError> {
+    pub fn lint<'a>(&mut self, reader: TwirReader<'a>) -> Result<(), LintError<'a>> {
         let mut error_count: u32 = 0;
 
         for line in reader {
@@ -191,17 +191,17 @@ impl EventSectionLinter {
                     Err(e) => {
                         error!("{}", e);
 
-                        // TODO: fix
                         // attempt to continue to parse, this could print out a bunch of errors in some cases
-                        // setting the next state is a total guess here
-                        // self.linter_state = match self.linter_state {
-                        //     LinterState::PreEvents => todo!(),
-                        //     LinterState::ExpectingDateRange => todo!(),
-                        //     LinterState::ExpectingRegionalHeader => todo!(),
-                        //     LinterState::ExpectingEventDateLocationGroupLink => todo!(),
-                        //     LinterState::ExpectingEventNameLink => todo!(),
-                        //     LinterState::Done => todo!(),
-                        // };
+                        // setting the next state is a total guess here and only makes sense in a few states
+                        self.linter_state = match self.linter_state {
+                            LinterState::ExpectingEventDateLocationGroupLink => {
+                                LinterState::ExpectingEventNameLink
+                            }
+                            LinterState::ExpectingEventNameLink => {
+                                LinterState::ExpectingEventDateLocationGroupLink
+                            }
+                            _ => return Err(LintError::LintFailed),
+                        };
 
                         error_count += 1;
 
@@ -217,8 +217,24 @@ impl EventSectionLinter {
                     if self.linter_state == LinterState::PreEvents {
                         continue;
                     } else {
-                        // TODO: bubble up error better
+                        // TODO: clean all this up, consolidate error handling for both error cases bubble up error better
                         error!("{}", line_error);
+                        self.linter_state = match self.linter_state {
+                            LinterState::ExpectingEventDateLocationGroupLink => {
+                                LinterState::ExpectingEventNameLink
+                            }
+                            LinterState::ExpectingEventNameLink => {
+                                LinterState::ExpectingEventDateLocationGroupLink
+                            }
+                            _ => return Err(LintError::LintFailed),
+                        };
+
+                        error_count += 1;
+
+                        if error_count == self.error_limit {
+                            error!("reached our maximum error limit, bailing");
+                            return Err(LintError::LintFailed);
+                        }
                     }
                 }
             }

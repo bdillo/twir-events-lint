@@ -31,7 +31,7 @@ impl std::fmt::Display for TwirLine<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TwirLineError<'a> {
     error: LineParseError,
     line_num: u64,
