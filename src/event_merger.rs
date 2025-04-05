@@ -102,14 +102,14 @@ fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>,
                 current_region = region.clone();
                 state = LinterState::ExpectingEventDateLocationGroupLink;
             }
-            EventLineType::EventDateLocationGroup(edlg) => {
+            EventLineType::EventDate(edlg) => {
                 if state != LinterState::ExpectingEventDateLocationGroupLink {
                     panic!("wrong state")
                 }
                 event_date_location = Some(edlg.clone());
                 state = LinterState::ExpectingEventNameLink
             }
-            EventLineType::EventName(event_name_urls) => {
+            EventLineType::EventInfo(event_name_urls) => {
                 if state != LinterState::ExpectingEventNameLink {
                     panic!("wrong state")
                 }

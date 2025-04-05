@@ -101,9 +101,9 @@ pub enum EventLineType {
     /// Header of a new regional section, "### Virtual", "### Asia"...
     EventRegionHeader(String),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
-    EventDateLocationGroup(EventDateLocationGroup),
+    EventDate(EventDateLocationGroup),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
-    EventName(Vec<EventNameUrl>),
+    EventInfo(Vec<EventNameUrl>),
     /// End of the event section "If you are running a Rust event please add..."
     EndEventSection,
     /// A line we don't recognize - should only be lines that are not within the event section
@@ -127,11 +127,11 @@ impl FromStr for EventLineType {
             }
             s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
                 let event_date_location_group = Self::extract_and_validate_date_location_group(s)?;
-                Self::EventDateLocationGroup(event_date_location_group)
+                Self::EventDate(event_date_location_group)
             }
             s if s.starts_with(EVENT_NAME_HINT) => {
                 let event_names = Self::validate_event_name(s)?;
-                Self::EventName(event_names)
+                Self::EventInfo(event_names)
             }
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
             _ => Self::Unrecognized,
@@ -150,8 +150,13 @@ impl fmt::Display for EventLineType {
                 &format!("{}({}, {})", EVENTS_DATE_RANGE_TYPE, start, end)
             }
             Self::EventRegionHeader(region) => &format!("{}({})", EVENT_REGION_HEADER_TYPE, region),
-            Self::EventDateLocationGroup(_event_date_location) => EVENT_DATE_LOCATION_GROUP_TYPE, // TODO: fix this
-            Self::EventName(event_name_url) => EVENT_NAME_TYPE,
+            Self::EventDate(event_date_location) => &format!(
+                "{} ({:?})",
+                EVENT_DATE_LOCATION_GROUP_TYPE, event_date_location
+            ),
+            Self::EventInfo(event_name_url) => {
+                &format!("{}({:?})", EVENT_NAME_TYPE, event_name_url)
+            }
             Self::EndEventSection => END_EVENT_SECTION_TYPE,
             Self::Unrecognized => UNRECOGNIZED_TYPE,
         };
@@ -401,9 +406,13 @@ mod test {
             "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
         let parsed = line.parse::<EventLineType>()?;
 
-        let expected = EventLineType::EventDateLocationGroup(EventDateLocationGroup {
+        let expected = EventLineType::EventDate(EventDateLocationGroup {
             date: "2024-10-24".parse::<NaiveDate>()?,
             location: "Virtual".to_owned(),
+            organizers: vec![(
+                "Women in Rust".to_owned(),
+                Url::parse("https://www.meetup.com/women-in-rust/").expect("failed to parse url"),
+            )],
         });
 
         assert_eq!(parsed, expected);
@@ -414,7 +423,15 @@ mod test {
     fn test_event_name() -> TestResult {
         let line = "    * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**](https://www.meetup.com/women-in-rust/events/303213835/)";
         let parsed = line.parse::<EventLineType>()?;
-        assert_eq!(parsed, EventLineType::EventName);
+        assert_eq!(
+            parsed,
+            EventLineType::EventInfo(vec![EventNameUrl {
+                name: "**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**"
+                    .to_owned(),
+                url: Url::parse("https://www.meetup.com/women-in-rust/events/303213835/")
+                    .expect("failed to parse url"),
+            }])
+        );
         Ok(())
     }
 

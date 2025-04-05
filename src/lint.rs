@@ -336,7 +336,7 @@ impl EventSectionLinter {
         line: &'a TwirLine,
     ) -> Result<(), LintError<'a>> {
         match line.line_type() {
-            EventLineType::EventDateLocationGroup(event_date_location) => {
+            EventLineType::EventDate(event_date_location) => {
                 // validate event is within date range
                 if let Some(date_range) = &self.event_date_range {
                     if (event_date_location.date() < date_range.0)
@@ -396,7 +396,7 @@ impl EventSectionLinter {
         line: &'a TwirLine,
     ) -> Result<(), LintError<'a>> {
         match line.line_type() {
-            EventLineType::EventName(event_name_urls) => {
+            EventLineType::EventInfo(_event_name_urls) => {
                 self.linter_state = LinterState::ExpectingEventDateLocationGroupLink;
                 Ok(())
             }
