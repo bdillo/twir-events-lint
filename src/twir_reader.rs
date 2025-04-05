@@ -1,6 +1,6 @@
 use crate::event_line_types::{EventLineType, LineParseError};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TwirLine<'a> {
     line_num: u64,
     line_type: EventLineType,
@@ -21,6 +21,16 @@ impl TwirLine<'_> {
     }
 }
 
+impl TwirLine<'_> {
+    pub fn to_owned(&self) -> OwnedTwirLine {
+        OwnedTwirLine {
+            line_num: self.line_num,
+            line_type: self.line_type.clone(),
+            line_raw: self.line_raw.to_owned(),
+        }
+    }
+}
+
 impl std::fmt::Display for TwirLine<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -32,13 +42,30 @@ impl std::fmt::Display for TwirLine<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TwirLineError<'a> {
-    error: LineParseError,
+pub struct OwnedTwirLine {
     line_num: u64,
-    line_raw: &'a str,
+    line_type: EventLineType,
+    line_raw: String,
 }
 
-impl std::fmt::Display for TwirLineError<'_> {
+impl std::fmt::Display for OwnedTwirLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "line #{}, type '{}': '{}'",
+            self.line_num, self.line_type, self.line_raw
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TwirLineError {
+    error: LineParseError,
+    line_num: u64,
+    line_raw: String,
+}
+
+impl std::fmt::Display for TwirLineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -64,7 +91,7 @@ impl<'a> TwirReader<'a> {
 }
 
 impl<'a> Iterator for TwirReader<'a> {
-    type Item = Result<TwirLine<'a>, TwirLineError<'a>>;
+    type Item = Result<TwirLine<'a>, TwirLineError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.contents.is_empty() {
@@ -92,7 +119,7 @@ impl<'a> Iterator for TwirReader<'a> {
             Err(e) => Err(TwirLineError {
                 error: e,
                 line_num: self.line_num,
-                line_raw: line,
+                line_raw: line.to_owned(),
             }),
         })
     }
