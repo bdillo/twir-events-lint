@@ -53,24 +53,45 @@ impl From<url::ParseError> for LineParseError {
 
 /// An event's date and location. Used to ensure our dates are ordered correctly, first by date, then by location
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct EventDateLocation {
+pub struct EventDateLocationGroup {
     date: NaiveDate,
     location: String,
+    organizers: Vec<(String, Url)>,
 }
 
-impl EventDateLocation {
-    pub fn date(&self) -> &NaiveDate {
-        &self.date
+impl EventDateLocationGroup {
+    pub fn date(&self) -> NaiveDate {
+        self.date
     }
 
     pub fn location(&self) -> &str {
         &self.location
     }
+
+    pub fn organizers(&self) -> &[(String, Url)] {
+        &self.organizers
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EventNameUrl {
+    name: String,
+    url: Url,
+}
+
+impl EventNameUrl {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
 }
 
 /// The type of a given line of text in the event section
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum EventLineType {
+pub enum EventLineType {
     /// A newline
     Newline,
     /// Start of the events section, "## Upcoming Events"
@@ -80,9 +101,9 @@ pub(crate) enum EventLineType {
     /// Header of a new regional section, "### Virtual", "### Asia"...
     EventRegionHeader(String),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
-    EventDateLocationGroup(EventDateLocation),
+    EventDateLocationGroup(EventDateLocationGroup),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
-    EventName,
+    EventName(Vec<EventNameUrl>),
     /// End of the event section "If you are running a Rust event please add..."
     EndEventSection,
     /// A line we don't recognize - should only be lines that are not within the event section
@@ -105,15 +126,12 @@ impl FromStr for EventLineType {
                 Self::EventRegionHeader(region.to_owned())
             }
             s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
-                let (date, location) = Self::extract_and_validate_date_location_group(s)?;
-                Self::EventDateLocationGroup(EventDateLocation {
-                    date,
-                    location: location.to_owned(),
-                })
+                let event_date_location_group = Self::extract_and_validate_date_location_group(s)?;
+                Self::EventDateLocationGroup(event_date_location_group)
             }
             s if s.starts_with(EVENT_NAME_HINT) => {
-                Self::validate_event_name(s)?;
-                Self::EventName
+                let event_names = Self::validate_event_name(s)?;
+                Self::EventName(event_names)
             }
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
             _ => Self::Unrecognized,
@@ -133,7 +151,7 @@ impl fmt::Display for EventLineType {
             }
             Self::EventRegionHeader(region) => &format!("{}({})", EVENT_REGION_HEADER_TYPE, region),
             Self::EventDateLocationGroup(_event_date_location) => EVENT_DATE_LOCATION_GROUP_TYPE, // TODO: fix this
-            Self::EventName => EVENT_NAME_TYPE,
+            Self::EventName(event_name_url) => EVENT_NAME_TYPE,
             Self::EndEventSection => END_EVENT_SECTION_TYPE,
             Self::Unrecognized => UNRECOGNIZED_TYPE,
         };
@@ -188,7 +206,7 @@ impl EventLineType {
     /// Extracts date and location from events, also validates group links
     fn extract_and_validate_date_location_group(
         line: &str,
-    ) -> Result<(NaiveDate, &str), LineParseError> {
+    ) -> Result<EventDateLocationGroup, LineParseError> {
         let re = &*EVENT_DATE_LOCATION_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
 
@@ -223,13 +241,23 @@ impl EventLineType {
             vec![links_capture]
         };
 
-        Self::validate_markdown_urls(links, false)?;
+        // TODO: name this stuff better
+        let mut validated: Vec<(String, Url)> = Vec::new();
+        for md_link in links {
+            let group_name_link = Self::validate_markdown_url(md_link, false)?;
+            validated.push((group_name_link.0.to_owned(), group_name_link.1));
+        }
 
-        Ok((date_parsed, location_capture))
+        Ok(EventDateLocationGroup {
+            date: date_parsed,
+            location: location_capture.to_owned(),
+            organizers: validated,
+        })
     }
 
     /// Validates event names/links
-    fn validate_event_name(line: &str) -> Result<(), LineParseError> {
+    // TODO: rename
+    fn validate_event_name(line: &str) -> Result<Vec<EventNameUrl>, LineParseError> {
         let re = &*EVENT_NAME_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
         debug!("Captured: '{:?}'", &captures);
@@ -246,46 +274,53 @@ impl EventLineType {
             vec![link_captures]
         };
 
-        Self::validate_markdown_urls(links, true)?;
-
-        Ok(())
-    }
-
-    /// Validates one or more links are formatted as expected in markdown, e.g. `[My label](https://mylink.test)`
-    // TODO: don't like bool args, clean this up probably. Ok for now since this check is so simple and all the code that
-    // calls this function is right here
-    fn validate_markdown_urls(
-        urls: Vec<&str>,
-        check_label_is_bold: bool,
-    ) -> Result<(), LineParseError> {
-        let re = &*MD_LINK_RE;
-        for url in urls {
-            let capture = re
-                .captures(url)
-                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?;
-
-            debug!("Captured: '{:?}'", &capture);
-
-            let label = capture
-                .name(LINK_LABEL)
-                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
-                .as_str();
-
-            if check_label_is_bold
-                && (&label[0..2] != "**" || &label[label.len() - 2..label.len()] != "**")
-            {
-                return Err(LineParseError::InvalidLinkLabel(label.to_owned()));
-            }
-
-            let url = capture
-                .name(LINK)
-                .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
-                .as_str();
-
-            Self::validate_url(&Url::parse(url)?)?;
+        let mut results: Vec<EventNameUrl> = Vec::new();
+        for md_link in links {
+            let group_name_link = Self::validate_markdown_url(md_link, true)?;
+            results.push(EventNameUrl {
+                name: group_name_link.0.to_owned(),
+                url: group_name_link.1,
+            });
         }
 
-        Ok(())
+        Ok(results)
+    }
+
+    /// Validates a link is formatted as expected in markdown, e.g. `[My label](https://mylink.test)`
+    // TODO: don't like bool args, clean this up probably. Ok for now since this check is so simple and all the code that
+    // calls this function is right here
+    fn validate_markdown_url(
+        url: &str,
+        check_label_is_bold: bool,
+    ) -> Result<(&str, Url), LineParseError> {
+        let re = &*MD_LINK_RE;
+        let capture = re
+            .captures(url)
+            .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?;
+
+        debug!("Captured: '{:?}'", &capture);
+
+        let label = capture
+            .name(LINK_LABEL)
+            .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
+            .as_str();
+
+        if check_label_is_bold
+            && (&label[0..2] != "**" || &label[label.len() - 2..label.len()] != "**")
+        {
+            return Err(LineParseError::InvalidLinkLabel(label.to_owned()));
+        }
+
+        let url_str = capture
+            .name(LINK)
+            .ok_or_else(|| LineParseError::PatternNotMatched(re.as_str().to_owned()))?
+            .as_str();
+
+        let url = Url::parse(url_str)?;
+
+        Self::validate_url(&url)?;
+
+        Ok((label, url))
     }
 
     /// Validates a URL is actually kind of valid and any domain-specific logic can be implemented here
@@ -366,7 +401,7 @@ mod test {
             "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
         let parsed = line.parse::<EventLineType>()?;
 
-        let expected = EventLineType::EventDateLocationGroup(EventDateLocation {
+        let expected = EventLineType::EventDateLocationGroup(EventDateLocationGroup {
             date: "2024-10-24".parse::<NaiveDate>()?,
             location: "Virtual".to_owned(),
         });

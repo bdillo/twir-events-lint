@@ -76,7 +76,7 @@ impl<'a> Iterator for TwirReader<'a> {
         let line = match self.contents.find('\n') {
             Some(offset) => {
                 let line = &self.contents[..offset];
-                // leave our our newline
+                // leave out our newline
                 self.contents = &self.contents[offset + 1..];
                 line
             }

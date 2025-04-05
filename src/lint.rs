@@ -5,7 +5,7 @@ use log::{debug, error};
 
 use crate::{
     constants::*,
-    event_line_types::{EventDateLocation, EventLineType},
+    event_line_types::{EventDateLocationGroup, EventLineType},
     twir_reader::{TwirLine, TwirLineError, TwirReader},
 };
 
@@ -159,7 +159,7 @@ pub struct EventSectionLinter {
     /// Region we are in
     current_region: Option<String>,
     /// The last event in our current region. Used to make sure we have our events properly sorted by date and location name
-    previous_event: Option<EventDateLocation>,
+    previous_event: Option<EventDateLocationGroup>,
     /// Maximum error count before bailing
     error_limit: u32,
 }
@@ -339,12 +339,12 @@ impl EventSectionLinter {
             EventLineType::EventDateLocationGroup(event_date_location) => {
                 // validate event is within date range
                 if let Some(date_range) = &self.event_date_range {
-                    if (*event_date_location.date() < date_range.0)
-                        || (*event_date_location.date() > date_range.1)
+                    if (event_date_location.date() < date_range.0)
+                        || (event_date_location.date() > date_range.1)
                     {
                         return Err(LintError::EventOutOfDateRange {
                             line: line.clone(),
-                            event_date: *event_date_location.date(),
+                            event_date: event_date_location.date(),
                             date_range: *date_range,
                         });
                     }
@@ -360,9 +360,9 @@ impl EventSectionLinter {
                     if event_date_location < previous_event {
                         return Err(LintError::EventOutOfOrder {
                             line: line.clone(),
-                            event_date: *event_date_location.date(),
+                            event_date: event_date_location.date(),
                             event_location: event_date_location.location().to_owned(),
-                            previous_event_date: *previous_event.date(),
+                            previous_event_date: previous_event.date(),
                             previous_event_location: previous_event.location().to_owned(),
                         });
                     }
@@ -396,7 +396,7 @@ impl EventSectionLinter {
         line: &'a TwirLine,
     ) -> Result<(), LintError<'a>> {
         match line.line_type() {
-            EventLineType::EventName => {
+            EventLineType::EventName(event_name_urls) => {
                 self.linter_state = LinterState::ExpectingEventDateLocationGroupLink;
                 Ok(())
             }

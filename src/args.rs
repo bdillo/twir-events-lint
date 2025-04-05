@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-pub struct Args {
+pub struct LinterArgs {
     /// Markdown file to lint
     #[arg(short, long)]
     file: PathBuf,
@@ -18,7 +18,7 @@ pub struct Args {
     error_limit: u32,
 }
 
-impl Args {
+impl LinterArgs {
     pub fn file(&self) -> &PathBuf {
         &self.file
     }
@@ -33,5 +33,32 @@ impl Args {
 
     pub fn error_limit(&self) -> u32 {
         self.error_limit
+    }
+}
+
+#[derive(Parser, Debug)]
+pub struct MergerArgs {
+    /// TWIR draft file
+    #[arg(short, long)]
+    file: PathBuf,
+    /// File containing new TWIR events
+    #[arg(short, long)]
+    new_events_file: PathBuf,
+    /// Enable debug logging
+    #[arg(short, long, default_value_t = false)]
+    debug: bool,
+}
+
+impl MergerArgs {
+    pub fn file(&self) -> &PathBuf {
+        &self.file
+    }
+
+    pub fn new_events_file(&self) -> &PathBuf {
+        &self.new_events_file
+    }
+
+    pub fn debug(&self) -> bool {
+        self.debug
     }
 }

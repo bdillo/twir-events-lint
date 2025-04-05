@@ -24,7 +24,7 @@ pub(crate) const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
 pub(crate) const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
 /// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
-pub(crate) const REGIONS: &[&str] = &[
+pub const REGIONS: &[&str] = &[
     "Virtual",
     "Africa",
     "Asia",

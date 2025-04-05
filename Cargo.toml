@@ -10,3 +10,11 @@ log = "0.4.22"
 regex = "1.11.1"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 url = "2.5.3"
+
+[[bin]]
+name = "lint"
+path = "src/main.rs"
+
+[[bin]]
+name = "merge"
+path = "src/event_merger.rs"
