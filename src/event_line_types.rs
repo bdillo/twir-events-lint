@@ -98,8 +98,8 @@ pub enum EventLineType {
     StartEventSection,
     /// The date range in the events section, "Rusty Events between..."
     EventsDateRange(NaiveDate, NaiveDate),
-    /// Header of a new regional section, "### Virtual", "### Asia"...
-    EventRegionHeader(String),
+    /// Header of a section, we use these for the regions, like "### Virtual", "### Asia"...
+    Header(Option<String>),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
     EventDate(EventDateLocationGroup),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
@@ -121,9 +121,8 @@ impl FromStr for EventLineType {
                 let parsed_time_range = Self::extract_date_range(s)?;
                 Self::EventsDateRange(parsed_time_range.0, parsed_time_range.1)
             }
-            s if s.starts_with(EVENT_REGION_HEADER) => {
-                let region = Self::extract_and_validate_region_header(s)?;
-                Self::EventRegionHeader(region.to_owned())
+            s if s.starts_with(MD_HEADER) => {
+                Self::Header(Self::extract_and_validate_region_header(s))
             }
             s if EVENT_DATE_LOCATION_HINT_RE.is_match(s) => {
                 let event_date_location_group = Self::extract_and_validate_date_location_group(s)?;
@@ -149,7 +148,7 @@ impl fmt::Display for EventLineType {
             Self::EventsDateRange(start, end) => {
                 &format!("{}({}, {})", EVENTS_DATE_RANGE_TYPE, start, end)
             }
-            Self::EventRegionHeader(region) => &format!("{}({})", EVENT_REGION_HEADER_TYPE, region),
+            Self::Header(region) => &format!("{}({:?})", EVENT_REGION_HEADER_TYPE, region),
             Self::EventDate(event_date_location) => &format!(
                 "{} ({:?})",
                 EVENT_DATE_LOCATION_GROUP_TYPE, event_date_location
@@ -193,19 +192,15 @@ impl EventLineType {
         Ok((start_parsed, end_parsed))
     }
 
-    /// Extracts and validates the region is an expected one in a region header (e.g. "### Virtual")
-    fn extract_and_validate_region_header(line: &str) -> Result<&str, LineParseError> {
-        let region =
-            line.strip_prefix(EVENT_REGION_HEADER)
-                .ok_or(LineParseError::PatternNotMatched(
-                    EVENT_REGION_HEADER.to_owned(),
-                ))?;
-
-        if !REGIONS.contains(&region) {
-            Err(LineParseError::UnknownRegion(region.to_owned()))
-        } else {
-            Ok(region)
+    /// Extracts and validates the region is an expected one in a region header (e.g. "### Virtual"). If we have a header
+    /// that isn't a region, just return None
+    fn extract_and_validate_region_header(line: &str) -> Option<String> {
+        if let Some(maybe_region) = line.strip_prefix(EVENT_REGION_HEADER) {
+            if REGIONS.contains(&maybe_region) {
+                return Some(maybe_region.to_owned());
+            }
         }
+        None
     }
 
     /// Extracts date and location from events, also validates group links
@@ -395,7 +390,7 @@ mod test {
     fn test_event_region_header() -> TestResult {
         let line = "### Virtual";
         let parsed = line.parse::<EventLineType>()?;
-        let expected = EventLineType::EventRegionHeader("Virtual".to_owned());
+        let expected = EventLineType::Header(Some("Virtual".to_owned()));
         assert_eq!(parsed, expected);
         Ok(())
     }

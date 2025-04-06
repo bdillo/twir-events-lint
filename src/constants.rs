@@ -4,6 +4,7 @@ use url::Host;
 
 /// Lines we expect to match exactly
 pub(crate) const START_EVENTS_SECTION: &str = "## Upcoming Events";
+pub(crate) const MD_HEADER: &str = "#";
 pub(crate) const EVENT_REGION_HEADER: &str = "### ";
 pub(crate) const END_EVENTS_SECTION: &str =
     "If you are running a Rust event please add it to the [calendar]";
@@ -24,7 +25,7 @@ pub(crate) const END_EVENT_SECTION_TYPE: &str = "EndEventSection";
 pub(crate) const UNRECOGNIZED_TYPE: &str = "Unrecognized";
 
 /// Regions from headers, e.g. "Virtual", "Asia", "Europe", etc.
-pub const REGIONS: &[&str] = &[
+pub const REGIONS: [&str; 7] = [
     "Virtual",
     "Africa",
     "Asia",

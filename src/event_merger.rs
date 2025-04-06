@@ -22,6 +22,7 @@ struct TwirEvent {
     event_name: Vec<EventNameUrl>,
 }
 
+// TODO: probably push these fmts into EventDateLocationGroup and EventNameUrl?
 impl std::fmt::Display for TwirEvent {
     // example outputs
     // * 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)
@@ -86,27 +87,42 @@ impl TwirEvent {
 fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>, TwirLineError> {
     let mut results: HashMap<String, Vec<TwirEvent>> = HashMap::new();
     let mut state = LinterState::ExpectingRegionalHeader;
+    let mut in_event_section = false;
     let mut current_region = String::new();
 
     let mut event_date_location: Option<EventDateLocationGroup> = None;
 
+    // TODO: clean up errors
     for line in reader {
         let line = line?;
+        debug!("read line:\n{}", line);
         match line.line_type() {
             EventLineType::Newline => {
+                if !in_event_section {
+                    continue;
+                }
+
                 if state != LinterState::ExpectingEventDateLocationGroupLink {
                     panic!("wrong state")
                 }
             }
-            EventLineType::EventRegionHeader(region) => {
-                current_region = region.clone();
-                state = LinterState::ExpectingEventDateLocationGroupLink;
+            EventLineType::Header(maybe_region) => {
+                if let Some(region) = maybe_region {
+                    if !in_event_section {
+                        in_event_section = true;
+                    }
+
+                    current_region = region.clone();
+                    state = LinterState::ExpectingEventDateLocationGroupLink;
+                } else if in_event_section {
+                    panic!("expected region header")
+                }
             }
-            EventLineType::EventDate(edlg) => {
+            EventLineType::EventDate(event_date) => {
                 if state != LinterState::ExpectingEventDateLocationGroupLink {
                     panic!("wrong state")
                 }
-                event_date_location = Some(edlg.clone());
+                event_date_location = Some(event_date.clone());
                 state = LinterState::ExpectingEventNameLink
             }
             EventLineType::EventInfo(event_name_urls) => {
@@ -132,7 +148,19 @@ fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>,
                     .or_default()
                     .push(event);
             }
-            _ => panic!("unsupported line"),
+            EventLineType::EndEventSection => {
+                if !in_event_section {
+                    panic!("couldn't find event section")
+                }
+                break;
+            }
+            _ => {
+                if !in_event_section {
+                    continue;
+                } else {
+                    panic!("unsupported line:\n{}", line)
+                }
+            }
         }
     }
 
@@ -162,6 +190,9 @@ fn merge_events(draft_events: &[TwirEvent], new_events: &[TwirEvent]) -> Vec<Twi
                 debug!("updated event {:?}", new_event_key);
                 let _ = std::mem::replace(draft_event, new_event.clone());
             }
+        } else {
+            debug!("found new event: {:?}", new_event_key);
+            events_map.insert(new_event_key, new_event.clone());
         }
     }
     let mut updated_events: Vec<TwirEvent> = Vec::new();
@@ -198,11 +229,10 @@ fn main() {
     let draft_events = collect_events(draft_reader).expect("failed to collect draft events");
     let new_events = collect_events(new_events_reader).expect("failed to collect new events");
 
-    // println!("{:?}", draft_events);
     for region in REGIONS {
         // check if the region exists in draft events, new events, both, or neither
-        let region_draft_events = draft_events.get(*region);
-        let region_new_events = new_events.get(*region);
+        let region_draft_events = draft_events.get(region);
+        let region_new_events = new_events.get(region);
 
         // if one has events in a region and the other doesn't, just take all events from the one that has the region
         // no merging needed
@@ -213,15 +243,15 @@ fn main() {
         if region_draft_events.is_some() && region_new_events.is_none() {
             for event in region_draft_events.unwrap() {
                 println!("{}", event);
-                println!();
             }
+            println!();
             continue;
         }
-        if region_new_events.is_none() && region_new_events.is_some() {
+        if region_draft_events.is_none() && region_new_events.is_some() {
             for event in region_new_events.unwrap() {
                 println!("{}", event);
-                println!();
             }
+            println!();
             continue;
         }
 

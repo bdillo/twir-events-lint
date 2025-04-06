@@ -35,10 +35,6 @@ pub enum LintError {
     },
     EventOutOfOrder {
         line: OwnedTwirLine,
-        event_date: NaiveDate,
-        event_location: String,
-        previous_event_date: NaiveDate,
-        previous_event_location: String,
     },
     DateRangeNotSet {
         line: OwnedTwirLine,
@@ -47,6 +43,9 @@ pub enum LintError {
     // TODO: add error message here?
     LintFailed,
     LineParseFailed(TwirLineError),
+    ExpectedRegionHeader {
+        line: OwnedTwirLine,
+    },
 }
 
 impl From<TwirLineError> for LintError {
@@ -83,16 +82,10 @@ impl fmt::Display for LintError {
                     event_date, date_range.0, date_range.1, line
                 )
             }
-            Self::EventOutOfOrder {
-                line,
-                event_date,
-                event_location,
-                previous_event_date,
-                previous_event_location,
-            } => {
+            Self::EventOutOfOrder { line } => {
                 format!(
-                    "event date '{}' and location '{}' should be after previous event date '{}' and location '{}'\n{}",
-                    event_date, event_location, previous_event_date, previous_event_location, line
+                    "event should be after previous event date, not before'\n{}",
+                    line
                 )
             }
             Self::DateRangeNotSet { line } => {
@@ -104,6 +97,9 @@ impl fmt::Display for LintError {
             Self::UnexpectedEnd => "reached unexpected end of file".to_owned(),
             Self::LintFailed => "lint failed! see above for error details".to_owned(),
             Self::LineParseFailed(twir_line_error) => twir_line_error.to_string(),
+            Self::ExpectedRegionHeader { line } => {
+                format!("header did not match an expected region\n{}", line)
+            }
         };
 
         write!(f, "{}", error_msg)
@@ -308,11 +304,17 @@ impl EventSectionLinter {
     fn handle_expecting_regional_header(&mut self, line: &TwirLine) -> Result<(), LintError> {
         match line.line_type() {
             EventLineType::Newline => Ok(()),
-            EventLineType::EventRegionHeader(region) => {
-                // TODO: check if region is already set
-                self.current_region = Some(region.clone());
-                self.linter_state = LinterState::ExpectingEventDateLocationGroupLink;
-                Ok(())
+            EventLineType::Header(maybe_region) => {
+                if let Some(region) = maybe_region {
+                    // TODO: check if region is already set
+                    self.current_region = Some(region.clone());
+                    self.linter_state = LinterState::ExpectingEventDateLocationGroupLink;
+                    Ok(())
+                } else {
+                    Err(LintError::ExpectedRegionHeader {
+                        line: line.to_owned(),
+                    })
+                }
             }
             EventLineType::EndEventSection => {
                 self.linter_state = LinterState::Done;
@@ -361,10 +363,6 @@ impl EventSectionLinter {
                     if event_date_location < previous_event {
                         return Err(LintError::EventOutOfOrder {
                             line: line.to_owned(),
-                            event_date: event_date_location.date(),
-                            event_location: event_date_location.location().to_owned(),
-                            previous_event_date: previous_event.date(),
-                            previous_event_location: previous_event.location().to_owned(),
                         });
                     }
                 }
