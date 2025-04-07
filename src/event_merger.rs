@@ -1,11 +1,6 @@
-// ok what are we doing
-// need to capture events from the newsletter
-// maybe hash map w/ region as key, vec of events
-// read in the same thing from the python script
-// compare events, deduplicate, insert in correct order
-
 use std::{collections::HashMap, fs};
 
+use chrono::NaiveDate;
 use clap::Parser;
 use log::{debug, info};
 use twir_events_lint::{
@@ -15,6 +10,10 @@ use twir_events_lint::{
     lint::LinterState,
     twir_reader::{TwirLineError, TwirReader},
 };
+
+// TODO:
+// strip events outside of date range
+// make it so we insert all the new events into the draft output
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 struct TwirEvent {
@@ -84,11 +83,21 @@ impl TwirEvent {
     }
 }
 
-fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>, TwirLineError> {
+fn collect_events(
+    reader: TwirReader,
+) -> Result<
+    (
+        HashMap<String, Vec<TwirEvent>>,
+        Option<(NaiveDate, NaiveDate)>,
+    ),
+    TwirLineError,
+> {
     let mut results: HashMap<String, Vec<TwirEvent>> = HashMap::new();
     let mut state = LinterState::ExpectingRegionalHeader;
+
     let mut in_event_section = false;
     let mut current_region = String::new();
+    let mut date_range: Option<(NaiveDate, NaiveDate)> = None;
 
     let mut event_date_location: Option<EventDateLocationGroup> = None;
 
@@ -129,17 +138,16 @@ fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>,
                 if state != LinterState::ExpectingEventNameLink {
                     panic!("wrong state")
                 }
-                // event_name = Some(event_name_urls.clone());
                 state = LinterState::ExpectingEventDateLocationGroupLink;
 
-                let edl = event_date_location.take().unwrap();
+                let date_location = event_date_location.take().unwrap();
                 let name = event_name_urls.clone();
                 if current_region.is_empty() {
                     panic!("region not set")
                 }
 
                 let event = TwirEvent {
-                    date_location_group: edl,
+                    date_location_group: date_location,
                     event_name: name,
                 };
 
@@ -154,6 +162,13 @@ fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>,
                 }
                 break;
             }
+            EventLineType::EventsDateRange(start_date, end_date) => {
+                if date_range.is_some() {
+                    panic!("already set date range, can't set again")
+                } else {
+                    date_range = Some((*start_date, *end_date))
+                }
+            }
             _ => {
                 if !in_event_section {
                     continue;
@@ -164,7 +179,7 @@ fn collect_events(reader: TwirReader) -> Result<HashMap<String, Vec<TwirEvent>>,
         }
     }
 
-    Ok(results)
+    Ok((results, date_range))
 }
 
 fn merge_events(draft_events: &[TwirEvent], new_events: &[TwirEvent]) -> Vec<TwirEvent> {
@@ -226,10 +241,14 @@ fn main() {
     let new_events_contents = fs::read_to_string(args.new_events_file()).unwrap();
     let new_events_reader = TwirReader::new(&new_events_contents);
 
-    let draft_events = collect_events(draft_reader).expect("failed to collect draft events");
-    let new_events = collect_events(new_events_reader).expect("failed to collect new events");
+    let (draft_events, date_range) =
+        collect_events(draft_reader).expect("failed to collect draft events");
+    let (new_events, _) = collect_events(new_events_reader).expect("failed to collect new events");
+
+    let date_range = date_range.expect("unable to find date range in draft");
 
     for region in REGIONS {
+        let mut events: Vec<TwirEvent> = Vec::new();
         // check if the region exists in draft events, new events, both, or neither
         let region_draft_events = draft_events.get(region);
         let region_new_events = new_events.get(region);
@@ -239,26 +258,30 @@ fn main() {
         if region_draft_events.is_none() && region_new_events.is_none() {
             continue;
         }
-        println!("{}", region);
+
         if region_draft_events.is_some() && region_new_events.is_none() {
             for event in region_draft_events.unwrap() {
-                println!("{}", event);
+                events.push(event.clone());
             }
-            println!();
-            continue;
-        }
-        if region_draft_events.is_none() && region_new_events.is_some() {
+        } else if region_draft_events.is_none() && region_new_events.is_some() {
             for event in region_new_events.unwrap() {
-                println!("{}", event);
+                events.push(event.clone())
             }
-            println!();
-            continue;
+        } else {
+            let merged = merge_events(region_draft_events.unwrap(), region_new_events.unwrap());
+            for event in merged {
+                events.push(event);
+            }
         }
 
-        let mut merged = merge_events(region_draft_events.unwrap(), region_new_events.unwrap());
-        merged.sort();
-
-        for event in merged {
+        events.sort();
+        println!("### {}", region);
+        for event in events {
+            let event_date = event.date_location_group.date();
+            if event_date < date_range.0 || event_date > date_range.1 {
+                debug!("skipping event, out of date range {:?}", event.event_key());
+                continue;
+            }
             println!("{}", event);
         }
         println!();
