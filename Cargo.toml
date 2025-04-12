@@ -13,8 +13,8 @@ url = "2.5.3"
 
 [[bin]]
 name = "lint"
-path = "src/main.rs"
+path = "src/bin/lint.rs"
 
 [[bin]]
 name = "merge"
-path = "src/event_merger.rs"
+path = "src/merger.rs"
