@@ -7,7 +7,7 @@ use twir_events_lint::{
     args::MergerArgs,
     constants::REGIONS,
     event_line_types::{EventDateLocationGroup, EventLineType, EventNameUrl},
-    lint::LinterState,
+    linter::LinterState,
     twir_reader::{OwnedTwirLine, TwirLineError, TwirReader},
 };
 
