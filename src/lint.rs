@@ -84,7 +84,7 @@ impl fmt::Display for LintError {
             }
             Self::EventOutOfOrder { line } => {
                 format!(
-                    "event should be after previous event date, not before'\n{}",
+                    "event should be after previous event date, not before\n{}",
                     line
                 )
             }
@@ -324,8 +324,6 @@ impl EventLinter {
 
                 // if there is a previous event, compare to make sure our current one is later than the previous one
                 if let Some(previous_event) = &self.previous_event {
-                    // TODO: make sure this comparison is correct
-                    // if event_date_location > *previous_event {
                     if event_date_location < previous_event {
                         return Err(LintError::EventOutOfOrder {
                             line: line.to_owned(),
@@ -378,7 +376,6 @@ mod test {
     fn build_event_section(body_to_add: Option<&str>) -> String {
         let mut text = "some pre events section text\n".to_owned();
         text.push_str("## Upcoming Events\n\n");
-        // just pushing each line separately to make it a little neater looking here, rather than one huge string literal
         text.push_str("Rusty Events between 2024-10-23 - 2024-11-20 🦀\n\n");
         text.push_str("### Virtual\n");
         text.push_str(
