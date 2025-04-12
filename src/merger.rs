@@ -101,15 +101,11 @@ impl TwirEvent {
     }
 }
 
+type EventsByRegion = HashMap<String, Vec<TwirEvent>>;
+
 fn collect_events(
     reader: TwirReader,
-) -> Result<
-    (
-        HashMap<String, Vec<TwirEvent>>,
-        Option<(NaiveDate, NaiveDate)>,
-    ),
-    EventMergerError,
-> {
+) -> Result<(EventsByRegion, Option<(NaiveDate, NaiveDate)>), EventMergerError> {
     let mut results: HashMap<String, Vec<TwirEvent>> = HashMap::new();
     let mut state = LinterState::ExpectingRegion;
 
