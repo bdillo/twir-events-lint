@@ -1,8 +1,9 @@
 use clap::Parser;
 use log::{error, info};
 use std::fs;
-use twir_events_lint::{args::LinterArgs, lint::EventSectionLinter, twir_reader::TwirReader};
+use twir_events_lint::{args::LinterArgs, lint::EventLinter, twir_reader::TwirReader};
 
+// TODO: rename this file?
 fn main() {
     let args = LinterArgs::parse();
 
@@ -18,7 +19,7 @@ fn main() {
     let md_contents = fs::read_to_string(args.file()).unwrap();
     let reader = TwirReader::new(&md_contents);
 
-    let mut event_linter = EventSectionLinter::new(args.error_limit());
+    let mut event_linter = EventLinter::new(args.error_limit());
     match event_linter.lint(reader) {
         Ok(_) => info!("lgtm!"),
         Err(e) => error!("{}", e),

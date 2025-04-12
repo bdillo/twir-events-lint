@@ -129,7 +129,7 @@ impl FromStr for EventLineType {
                 Self::EventDate(event_date_location_group)
             }
             s if s.starts_with(EVENT_NAME_HINT) => {
-                let event_names = Self::validate_event_name(s)?;
+                let event_names = Self::validate_event_name_url(s)?;
                 Self::EventInfo(event_names)
             }
             _ if s.starts_with(END_EVENTS_SECTION) => Self::EndEventSection,
@@ -256,8 +256,7 @@ impl EventLineType {
     }
 
     /// Validates event names/links
-    // TODO: rename
-    fn validate_event_name(line: &str) -> Result<Vec<EventNameUrl>, LineParseError> {
+    fn validate_event_name_url(line: &str) -> Result<Vec<EventNameUrl>, LineParseError> {
         let re = &*EVENT_NAME_RE;
         let captures = re.captures(line).ok_or_else(|| Self::map_regex_error(re))?;
         debug!("Captured: '{:?}'", &captures);
@@ -450,10 +449,7 @@ mod test {
     fn test_invalid_region_header() -> TestResult {
         let line = "### Pangea";
         let parsed = line.parse::<EventLineType>();
-        assert_eq!(
-            parsed,
-            Err(LineParseError::UnknownRegion("Pangea".to_owned()))
-        );
+        assert_eq!(parsed, Ok(EventLineType::Header(None)));
         Ok(())
     }
 

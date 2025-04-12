@@ -8,12 +8,36 @@ use twir_events_lint::{
     constants::REGIONS,
     event_line_types::{EventDateLocationGroup, EventLineType, EventNameUrl},
     lint::LinterState,
-    twir_reader::{TwirLineError, TwirReader},
+    twir_reader::{OwnedTwirLine, TwirLineError, TwirReader},
 };
 
 // TODO:
 // strip events outside of date range
 // make it so we insert all the new events into the draft output
+
+#[derive(Debug)]
+enum EventMergerError {
+    BadStateTransition(OwnedTwirLine),
+    LineParse(TwirLineError),
+}
+
+impl std::fmt::Display for EventMergerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let out = match self {
+            Self::BadStateTransition(line) => {
+                format!("bad state transition on line: {}", line)
+            }
+            Self::LineParse(twir_line_error) => twir_line_error.to_string(),
+        };
+        f.write_str(&out)
+    }
+}
+
+impl From<TwirLineError> for EventMergerError {
+    fn from(value: TwirLineError) -> Self {
+        Self::LineParse(value)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
 struct TwirEvent {
@@ -69,12 +93,6 @@ impl std::fmt::Display for TwirEvent {
 
 impl TwirEvent {
     // we need a unique key to identify events. we want to be able to:
-    // - update event titles if they change from week to week (new event name, same event link)
-    // - update event date if it is rescheduled from week to week (same event link, new time)
-    // - remove event if it was cancelled (not sure how we'd do this exactly, would probably have to check meetup directly)
-    //
-    // what are we gonna do with the key? i guess when reading the new events from the python script, if we see the same key,
-    // we know we need to do something to merge it.
     fn event_key(&self) -> Vec<String> {
         self.event_name
             .iter()
@@ -90,10 +108,10 @@ fn collect_events(
         HashMap<String, Vec<TwirEvent>>,
         Option<(NaiveDate, NaiveDate)>,
     ),
-    TwirLineError,
+    EventMergerError,
 > {
     let mut results: HashMap<String, Vec<TwirEvent>> = HashMap::new();
-    let mut state = LinterState::ExpectingRegionalHeader;
+    let mut state = LinterState::ExpectingRegion;
 
     let mut in_event_section = false;
     let mut current_region = String::new();
@@ -111,8 +129,8 @@ fn collect_events(
                     continue;
                 }
 
-                if state != LinterState::ExpectingEventDateLocationGroupLink {
-                    panic!("wrong state")
+                if state != LinterState::ExpectingEventDate {
+                    return Err(EventMergerError::BadStateTransition(line.to_owned()));
                 }
             }
             EventLineType::Header(maybe_region) => {
@@ -122,23 +140,23 @@ fn collect_events(
                     }
 
                     current_region = region.clone();
-                    state = LinterState::ExpectingEventDateLocationGroupLink;
+                    state = LinterState::ExpectingEventDate;
                 } else if in_event_section {
                     panic!("expected region header")
                 }
             }
             EventLineType::EventDate(event_date) => {
-                if state != LinterState::ExpectingEventDateLocationGroupLink {
-                    panic!("wrong state")
+                if state != LinterState::ExpectingEventDate {
+                    return Err(EventMergerError::BadStateTransition(line.to_owned()));
                 }
                 event_date_location = Some(event_date.clone());
-                state = LinterState::ExpectingEventNameLink
+                state = LinterState::ExpectingEventInfo
             }
             EventLineType::EventInfo(event_name_urls) => {
-                if state != LinterState::ExpectingEventNameLink {
-                    panic!("wrong state")
+                if state != LinterState::ExpectingEventInfo {
+                    return Err(EventMergerError::BadStateTransition(line.to_owned()));
                 }
-                state = LinterState::ExpectingEventDateLocationGroupLink;
+                state = LinterState::ExpectingEventDate;
 
                 let date_location = event_date_location.take().unwrap();
                 let name = event_name_urls.clone();
@@ -247,6 +265,7 @@ fn main() {
 
     let date_range = date_range.expect("unable to find date range in draft");
 
+    // TODO: print out everything before/after the draft section, rather than just the event section (then no need to copy/paste)
     for region in REGIONS {
         let mut events: Vec<TwirEvent> = Vec::new();
         // check if the region exists in draft events, new events, both, or neither
@@ -275,13 +294,21 @@ fn main() {
         }
 
         events.sort();
-        println!("### {}", region);
+        let mut region_printed = false;
+
         for event in events {
             let event_date = event.date_location_group.date();
             if event_date < date_range.0 || event_date > date_range.1 {
                 debug!("skipping event, out of date range {:?}", event.event_key());
                 continue;
             }
+
+            // don't print the region until we have at least one event, so we don't print empty region headers
+            if !region_printed {
+                println!("### {}", region);
+                region_printed = true;
+            }
+
             println!("{}", event);
         }
         println!();
