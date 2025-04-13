@@ -11,10 +11,14 @@ regex = "1.11.1"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 url = "2.5.3"
 
+[lib]
+name = "twir_events_lint"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lint"
 path = "src/bin/lint.rs"
 
 [[bin]]
 name = "merge"
-path = "src/merger.rs"
+path = "src/bin/merge.rs"
