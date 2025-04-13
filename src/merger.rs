@@ -238,3 +238,33 @@ pub fn merge_events(draft_events: &[TwirEvent], new_events: &[TwirEvent]) -> Vec
 
     updated_events
 }
+
+mod test {
+    use std::{fs, path::Path};
+
+    use super::*;
+
+    fn read_test<P: AsRef<Path>>(path: P) -> Vec<TwirEvent> {
+        let md = fs::read_to_string(path).expect("failed to read file");
+        let reader = TwirReader::new(&md);
+        let events = collect_events(reader).expect("failed to read events from draft");
+        println!("{:?}", events);
+        events
+            .0
+            .get("Virtual")
+            .expect("failed to get virtual events from draft")
+            .clone()
+    }
+
+    #[test]
+    fn test_merge() {
+        let draft = read_test("./test/merge/draft.md");
+        let updated = read_test("./test/merge/updated.md");
+
+        let mut merged = merge_events(&draft, &updated);
+        merged.sort();
+
+        let expected = read_test("./test/merge/expected.md");
+        assert_eq!(merged, expected);
+    }
+}
