@@ -478,4 +478,24 @@ mod test {
         );
         Ok(())
     }
+
+    #[test]
+    fn test_date_range_in_event() -> TestResult {
+        let line =
+            "* 2025-05-13 - 2025-05-17 | Utrecht, NL | [Rust NL](https://rustweek.org/about)";
+        let parsed = line.parse::<EventLineType>();
+
+        assert_eq!(
+            parsed,
+            Ok(EventLineType::EventDate(EventDateLocationGroup {
+                date: "2025-05-13".parse::<NaiveDate>()?,
+                location: "Utrecht, NL".to_owned(),
+                organizers: vec![(
+                    "Rust NL".to_owned(),
+                    Url::parse("https://rustweek.org/about").expect("failed to parse url")
+                )],
+            }))
+        );
+        Ok(())
+    }
 }

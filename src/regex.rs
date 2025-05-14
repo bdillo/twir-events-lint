@@ -34,8 +34,8 @@ pub(crate) static EVENT_DATE_LOCATION_HINT_RE: LazyLock<Regex> =
 /// Regex for event date location lines, e.g. "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)"
 pub(crate) static EVENT_DATE_LOCATION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"\* (?<{}>{}) \| (?<{}>.+) \| (?<{}>.+)",
-        DATE, DATE_RE_STR, LOCATION, GROUP_URLS
+        r"\* (?<{}>{})(?: - {})? \| (?<{}>.+) \| (?<{}>.+)",
+        DATE, DATE_RE_STR, DATE_RE_STR, LOCATION, GROUP_URLS
     ))
     .expect(REGEX_FAIL)
 });

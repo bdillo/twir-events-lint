@@ -3,7 +3,6 @@ use log::{error, info};
 use std::fs;
 use twir_events_lint::{args::LinterArgs, linter::EventLinter, twir_reader::TwirReader};
 
-// TODO: rename this file?
 fn main() {
     let args = LinterArgs::parse();
 
