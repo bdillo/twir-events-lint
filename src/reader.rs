@@ -1,37 +1,25 @@
-use crate::event_line_types::{EventLineType, LineParseError};
+use std::borrow::Cow;
+
+use crate::line_types::{EventLineType, LineParseError};
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct TwirLine<'a> {
+pub struct Line<'a> {
     line_num: u64,
     line_type: EventLineType,
-    line_raw: &'a str,
+    line_raw: Cow<'a, str>,
 }
 
-impl TwirLine<'_> {
-    pub fn line_num(&self) -> u64 {
-        self.line_num
-    }
-
-    pub fn line_type(&self) -> &EventLineType {
-        &self.line_type
-    }
-
-    pub fn line_raw(&self) -> &str {
-        self.line_raw
-    }
-}
-
-impl TwirLine<'_> {
-    pub fn to_owned(&self) -> OwnedTwirLine {
-        OwnedTwirLine {
+impl Line<'_> {
+    pub fn into_owned(self) -> Line<'static> {
+        Line {
             line_num: self.line_num,
             line_type: self.line_type.clone(),
-            line_raw: self.line_raw.to_owned(),
+            line_raw: Cow::Owned(self.line_raw.into_owned()),
         }
     }
 }
 
-impl std::fmt::Display for TwirLine<'_> {
+impl std::fmt::Display for Line<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -42,30 +30,13 @@ impl std::fmt::Display for TwirLine<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OwnedTwirLine {
-    line_num: u64,
-    line_type: EventLineType,
-    line_raw: String,
-}
-
-impl std::fmt::Display for OwnedTwirLine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "line #{}, type '{}': '{}'",
-            self.line_num, self.line_type, self.line_raw
-        )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TwirLineError {
+pub struct LineError {
     error: LineParseError,
     line_num: u64,
     line_raw: String,
 }
 
-impl std::fmt::Display for TwirLineError {
+impl std::fmt::Display for LineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -75,30 +46,31 @@ impl std::fmt::Display for TwirLineError {
     }
 }
 
+// TODO: where to put nice interface to collect events from?
 #[derive(Debug)]
-pub struct TwirReader<'a> {
+pub struct Reader<'a> {
     contents: &'a str,
-    line_num: u64,
+    current_line_num: u64,
 }
 
-impl<'a> TwirReader<'a> {
+impl<'a> Reader<'a> {
     pub fn new(contents: &'a str) -> Self {
         Self {
             contents,
-            line_num: 0,
+            current_line_num: 0,
         }
     }
 }
 
-impl<'a> Iterator for TwirReader<'a> {
-    type Item = Result<TwirLine<'a>, TwirLineError>;
+impl<'a> Iterator for Reader<'a> {
+    type Item = Result<Line<'a>, LineError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.contents.is_empty() {
             return None;
         }
 
-        self.line_num += 1;
+        self.current_line_num += 1;
 
         let line = match self.contents.find('\n') {
             Some(offset) => {
@@ -111,14 +83,14 @@ impl<'a> Iterator for TwirReader<'a> {
         };
 
         Some(match line.parse::<EventLineType>() {
-            Ok(line_type) => Ok(TwirLine {
-                line_num: self.line_num,
+            Ok(line_type) => Ok(Line {
+                line_num: self.current_line_num,
                 line_type,
-                line_raw: line,
+                line_raw: Cow::Borrowed(line),
             }),
-            Err(e) => Err(TwirLineError {
+            Err(e) => Err(LineError {
                 error: e,
-                line_num: self.line_num,
+                line_num: self.current_line_num,
                 line_raw: line.to_owned(),
             }),
         })

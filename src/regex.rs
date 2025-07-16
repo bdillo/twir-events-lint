@@ -56,7 +56,8 @@ pub(crate) static EVENT_NAME_RE: LazyLock<Regex> =
 pub(crate) static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
         // wow! unreadable!
-        r"^\[(?<{}>[^\]]+)\]\((?<{}>[^\)]+)\)$",
+        // r"^\[(?<{}>[^\]]+)\]\((?<{}>[^\)]+)\)$",
+        r"^\[(?<{}>.*?)\]\((?<{}>.*?)\)$",
         LINK_LABEL, LINK,
     ))
     .expect(REGEX_FAIL)
