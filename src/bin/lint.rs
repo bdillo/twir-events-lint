@@ -1,7 +1,7 @@
 use clap::Parser;
 use log::{error, info};
 use std::fs;
-use twir_events_lint::{args::LinterArgs, linter::EventLinter, twir_reader::TwirReader};
+use twir_events_lint::{args::LinterArgs, linter::EventLinter, reader::Reader};
 
 fn main() {
     let args = LinterArgs::parse();
@@ -16,7 +16,7 @@ fn main() {
 
     info!("reading file '{}'", args.file().display());
     let md_contents = fs::read_to_string(args.file()).unwrap();
-    let reader = TwirReader::new(&md_contents);
+    let reader = Reader::new(&md_contents);
 
     let mut event_linter = EventLinter::new(args.error_limit());
     match event_linter.lint(reader) {

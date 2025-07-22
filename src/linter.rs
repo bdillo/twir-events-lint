@@ -5,8 +5,8 @@ use log::{debug, error};
 
 use crate::{
     constants::*,
-    event_line_types::{EventDateLocationGroup, EventLineType},
-    twir_reader::{OwnedTwirLine, TwirLine, TwirLineError, TwirReader},
+    line_types::{EventDateLocationGroup, EventLineType},
+    reader::{Line, LineError, Reader},
 };
 
 // TODO:
@@ -18,43 +18,43 @@ use crate::{
 // - make sure each location in virtual section starts with "virtual"
 
 /// Linter errors
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LintError {
+#[derive(Debug, PartialEq, Eq)]
+pub enum LintError<'a> {
     UnexpectedDateRange {
-        line: OwnedTwirLine,
+        line: Line<'a>,
     },
     UnexpectedLineType {
-        line: OwnedTwirLine,
+        line: Line<'a>,
         linter_state: LinterState,
         expected_line_types: Vec<&'static str>,
     },
     EventOutOfDateRange {
-        line: OwnedTwirLine,
+        line: Line<'a>,
         event_date: NaiveDate,
         date_range: (NaiveDate, NaiveDate),
     },
     EventOutOfOrder {
-        line: OwnedTwirLine,
+        line: Line<'a>,
     },
     DateRangeNotSet {
-        line: OwnedTwirLine,
+        line: Line<'a>,
     },
     UnexpectedEnd,
     // TODO: add error message here?
     LintFailed,
-    LineParseFailed(TwirLineError),
+    LineParseFailed(LineError),
     ExpectedRegionHeader {
-        line: OwnedTwirLine,
+        line: Line<'a>,
     },
 }
 
-impl From<TwirLineError> for LintError {
-    fn from(value: TwirLineError) -> Self {
+impl<'a> From<LineError> for LintError<'a> {
+    fn from(value: LineError) -> Self {
         Self::LineParseFailed(value)
     }
 }
 
-impl fmt::Display for LintError {
+impl<'a> fmt::Display for LintError<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let error_msg = match self {
             Self::UnexpectedDateRange { line } => {
@@ -106,7 +106,7 @@ impl fmt::Display for LintError {
     }
 }
 
-impl std::error::Error for LintError {}
+impl<'a> std::error::Error for LintError<'a> {}
 
 /// Overall state of the linter, keeps track of what "section" we are in
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -160,12 +160,6 @@ pub struct EventLinter {
     error_limit: u32,
 }
 
-impl Default for EventLinter {
-    fn default() -> Self {
-        Self::new(20)
-    }
-}
-
 impl EventLinter {
     pub fn new(error_limit: u32) -> Self {
         Self {
@@ -177,7 +171,7 @@ impl EventLinter {
         }
     }
 
-    pub fn lint(&mut self, reader: TwirReader) -> Result<(), LintError> {
+    pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
         let mut error_count: u32 = 0;
 
         for line in reader {
@@ -218,13 +212,11 @@ impl EventLinter {
         }
     }
 
-    fn lint_line(&mut self, line: &TwirLine) -> Result<(), LintError> {
+    fn lint_line<'a>(&'a mut self, line: &'a Line<'a>) -> Result<(), LintError<'a>> {
         debug!(
-            "in state {}, parsed line #{} '{}' as '{:?}'",
+            "in state {}, parsed {}",
             self.linter_state.to_string(),
-            line.line_num(),
-            line.line_raw(),
-            line.line_type(),
+            line.to_string(),
         );
 
         match &self.linter_state {
@@ -241,15 +233,15 @@ impl EventLinter {
     }
 
     /// Handler before we are in the events section. Accepts all lines and just continues until we hit the event section
-    fn handle_pre_events(&mut self, line: &TwirLine) {
-        if line.line_type() == &EventLineType::StartEventSection {
+    fn handle_pre_events(&mut self, line: &Line) {
+        if line.get_line_type() == &EventLineType::StartEventSection {
             self.linter_state = LinterState::ExpectingDateRange;
         }
     }
 
     /// Handler to run when we are expecting to receive a date range line
-    fn handle_expecting_date_range(&mut self, line: &TwirLine) -> Result<(), LintError> {
-        match line.line_type() {
+    fn handle_expecting_date_range(&mut self, line: &Line) -> Result<(), LintError> {
+        match line.get_line_type() {
             EventLineType::Newline => Ok(()),
             EventLineType::EventsDateRange(start_date, end_date) => {
                 if self.event_date_range.is_none() {
@@ -258,20 +250,20 @@ impl EventLinter {
                     Ok(())
                 } else {
                     Err(LintError::UnexpectedDateRange {
-                        line: line.to_owned(),
+                        line: line.clone().into_owned(),
                     })
                 }
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: line.clone().into_owned(),
                 linter_state: self.linter_state,
                 expected_line_types: vec![NEWLINE_TYPE, EVENTS_DATE_RANGE_TYPE],
             }),
         }
     }
 
-    fn handle_expecting_region(&mut self, line: &TwirLine) -> Result<(), LintError> {
-        match line.line_type() {
+    fn handle_expecting_region<'a>(&mut self, line: &'a Line) -> Result<(), LintError<'a>> {
+        match line.get_line_type() {
             EventLineType::Newline => Ok(()),
             EventLineType::Header(maybe_region) => {
                 if let Some(region) = maybe_region {
@@ -281,7 +273,7 @@ impl EventLinter {
                     Ok(())
                 } else {
                     Err(LintError::ExpectedRegionHeader {
-                        line: line.to_owned(),
+                        line: line.clone().to_owned(),
                     })
                 }
             }
@@ -290,7 +282,7 @@ impl EventLinter {
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: line.clone().to_owned(),
                 linter_state: self.linter_state,
                 expected_line_types: vec![
                     NEWLINE_TYPE,
@@ -301,8 +293,8 @@ impl EventLinter {
         }
     }
 
-    fn handle_expecting_event_date(&mut self, line: &TwirLine) -> Result<(), LintError> {
-        match line.line_type() {
+    fn handle_expecting_event_date<'a>(&mut self, line: &'a Line) -> Result<(), LintError<'a>> {
+        match line.get_line_type() {
             EventLineType::EventDate(event_date_location) => {
                 // validate event is within date range
                 if let Some(date_range) = &self.event_date_range {
@@ -310,7 +302,7 @@ impl EventLinter {
                         || (event_date_location.date() > date_range.1)
                     {
                         return Err(LintError::EventOutOfDateRange {
-                            line: line.to_owned(),
+                            line: line.clone().to_owned(),
                             event_date: event_date_location.date(),
                             date_range: *date_range,
                         });
@@ -318,7 +310,7 @@ impl EventLinter {
                 // if we don't have the date range set, we are in an unexpected state
                 } else {
                     return Err(LintError::DateRangeNotSet {
-                        line: line.to_owned(),
+                        line: line.clone().to_owned(),
                     });
                 }
 
@@ -326,7 +318,7 @@ impl EventLinter {
                 if let Some(previous_event) = &self.previous_event {
                     if event_date_location < previous_event {
                         return Err(LintError::EventOutOfOrder {
-                            line: line.to_owned(),
+                            line: line.clone().to_owned(),
                         });
                     }
                 }
@@ -347,21 +339,21 @@ impl EventLinter {
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: line.clone().to_owned(),
                 linter_state: self.linter_state,
                 expected_line_types: vec![EVENT_DATE_LOCATION_GROUP_TYPE, NEWLINE_TYPE],
             }),
         }
     }
 
-    fn handle_expecting_event_info(&mut self, line: &TwirLine) -> Result<(), LintError> {
-        match line.line_type() {
+    fn handle_expecting_event_info<'a>(&mut self, line: &'a Line) -> Result<(), LintError<'a>> {
+        match line.get_line_type() {
             EventLineType::EventInfo(_event_name_urls) => {
                 self.linter_state = LinterState::ExpectingEventDate;
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: line.clone().to_owned(),
                 linter_state: self.linter_state,
                 expected_line_types: vec![EVENT_NAME_TYPE],
             }),

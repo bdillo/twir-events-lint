@@ -2,20 +2,33 @@ use std::borrow::Cow;
 
 use crate::line_types::{EventLineType, LineParseError};
 
-#[derive(Debug, PartialEq, Eq)]
+/// A single line from
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line<'a> {
     line_num: u64,
     line_type: EventLineType,
     line_raw: Cow<'a, str>,
 }
 
-impl Line<'_> {
+impl<'a> Line<'a> {
     pub fn into_owned(self) -> Line<'static> {
         Line {
             line_num: self.line_num,
             line_type: self.line_type.clone(),
             line_raw: Cow::Owned(self.line_raw.into_owned()),
         }
+    }
+
+    pub fn get_line_num(&self) -> u64 {
+        self.line_num
+    }
+
+    pub fn get_line_type(&self) -> &EventLineType {
+        &self.line_type
+    }
+
+    pub fn get_line_raw(&self) -> &Cow<'a, str> {
+        &self.line_raw
     }
 }
 

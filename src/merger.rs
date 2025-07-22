@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    event_line_types::{EventDateLocationGroup, EventLineType, EventNameUrl},
+    line_types::{EventDateLocationGroup, EventLineType, EventNameUrl},
     linter::LinterState,
-    twir_reader::{OwnedTwirLine, TwirLineError, TwirReader},
+    reader::{Line, LineError, Reader},
 };
 use chrono::NaiveDate;
 use log::debug;
@@ -12,12 +12,12 @@ use log::debug;
 // make it so we insert all the new events into the draft output
 
 #[derive(Debug)]
-pub enum EventMergerError {
-    BadStateTransition(OwnedTwirLine),
-    LineParse(TwirLineError),
+pub enum EventMergerError<'a> {
+    BadStateTransition(Line<'a>),
+    LineParse(LineError),
 }
 
-impl std::fmt::Display for EventMergerError {
+impl<'a> std::fmt::Display for EventMergerError<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let out = match self {
             Self::BadStateTransition(line) => {
@@ -29,8 +29,8 @@ impl std::fmt::Display for EventMergerError {
     }
 }
 
-impl From<TwirLineError> for EventMergerError {
-    fn from(value: TwirLineError) -> Self {
+impl<'a> From<LineError> for EventMergerError<'a> {
+    fn from(value: LineError) -> Self {
         Self::LineParse(value)
     }
 }
@@ -110,7 +110,7 @@ impl TwirEvent {
 type EventsByRegion = HashMap<String, Vec<TwirEvent>>;
 
 pub fn collect_events(
-    reader: TwirReader,
+    reader: Reader,
 ) -> Result<(EventsByRegion, Option<(NaiveDate, NaiveDate)>), EventMergerError> {
     let mut results: HashMap<String, Vec<TwirEvent>> = HashMap::new();
     let mut state = LinterState::ExpectingRegion;
@@ -126,7 +126,7 @@ pub fn collect_events(
     for line in reader {
         let line = line?;
         debug!("read line:\n{}", line);
-        match line.line_type() {
+        match line.get_line_type() {
             EventLineType::Newline => {
                 if !in_event_section {
                     continue;
@@ -246,7 +246,7 @@ mod test {
 
     fn read_test<P: AsRef<Path>>(path: P) -> Vec<TwirEvent> {
         let md = fs::read_to_string(path).expect("failed to read file");
-        let reader = TwirReader::new(&md);
+        let reader = Reader::new(&md);
         let events = collect_events(reader).expect("failed to read events from draft");
         println!("{:?}", events);
         events

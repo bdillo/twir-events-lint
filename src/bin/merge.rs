@@ -6,7 +6,7 @@ use twir_events_lint::{
     args::MergerArgs,
     constants::REGIONS,
     merger::{collect_events, merge_events, TwirEvent},
-    twir_reader::TwirReader,
+    reader::Reader,
 };
 
 fn main() {
@@ -27,10 +27,10 @@ fn main() {
     );
 
     let draft_contents = fs::read_to_string(args.file()).unwrap();
-    let draft_reader = TwirReader::new(&draft_contents);
+    let draft_reader = Reader::new(&draft_contents);
 
     let new_events_contents = fs::read_to_string(args.new_events_file()).unwrap();
-    let new_events_reader = TwirReader::new(&new_events_contents);
+    let new_events_reader = Reader::new(&new_events_contents);
 
     let (draft_events, date_range) =
         collect_events(draft_reader).expect("failed to collect draft events");
