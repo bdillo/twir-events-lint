@@ -1,4 +1,7 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
+
+use chrono::NaiveDate;
+use url::Url;
 
 use crate::line_types::{EventLineType, LineParseError};
 
@@ -109,3 +112,42 @@ impl<'a> Iterator for Reader<'a> {
         })
     }
 }
+
+/// TODO: probably move this into its own thing
+/// maybe make line_types use this
+#[derive(Debug)]
+pub enum EventDate {
+    Date(NaiveDate),
+    DateRange { start: NaiveDate, end: NaiveDate },
+}
+
+#[derive(Debug)]
+pub enum EventLocation {
+    Virtual,
+    VirtualWithLocation(String),
+    InPerson,
+}
+
+#[derive(Debug)]
+pub struct EventGroup {
+    name: String,
+    url: Url,
+}
+
+#[derive(Debug)]
+pub struct Event {
+    name: String,
+    url: Url,
+}
+
+#[derive(Debug)]
+pub struct EventListing {
+    date: EventDate,
+    location: EventLocation,
+    event_groups: Vec<EventGroup>,
+    event_instances: Vec<Event>,
+}
+
+type EventsByRegion = HashMap<String, Vec<Event>>;
+
+pub fn get_events(reader: Reader) -> Result<EventsByRegion, LineError> {}

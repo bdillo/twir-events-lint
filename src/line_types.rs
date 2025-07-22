@@ -163,6 +163,7 @@ impl fmt::Display for EventLineType {
     }
 }
 
+// TODO: remove all the regex crap
 impl EventLineType {
     /// Helper for regex errors
     fn map_regex_error(regex: &Regex) -> LineParseError {

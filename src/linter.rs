@@ -48,13 +48,13 @@ pub enum LintError<'a> {
     },
 }
 
-impl<'a> From<LineError> for LintError<'a> {
+impl From<LineError> for LintError<'_> {
     fn from(value: LineError) -> Self {
         Self::LineParseFailed(value)
     }
 }
 
-impl<'a> fmt::Display for LintError<'a> {
+impl fmt::Display for LintError<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let error_msg = match self {
             Self::UnexpectedDateRange { line } => {
@@ -106,7 +106,7 @@ impl<'a> fmt::Display for LintError<'a> {
     }
 }
 
-impl<'a> std::error::Error for LintError<'a> {}
+impl std::error::Error for LintError<'_> {}
 
 /// Overall state of the linter, keeps track of what "section" we are in
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -389,8 +389,8 @@ mod test {
     #[test]
     fn test_valid_event_section() {
         let text = build_event_section(None);
-        let reader = TwirReader::new(&text);
-        let mut linter = EventLinter::default();
+        let reader = Reader::new(&text);
+        let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
     }
 }
