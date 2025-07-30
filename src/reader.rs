@@ -1,6 +1,7 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, str::FromStr};
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveWeek};
+use nom::{bytes::complete::tag, bytes::complete::take_while1, combinator::map_res, IResult};
 use url::Url;
 
 use crate::line_types::{EventLineType, LineParseError};
@@ -9,7 +10,7 @@ use crate::line_types::{EventLineType, LineParseError};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line<'a> {
     line_num: u64,
-    line_type: EventLineType,
+    line_parsed: ParsedLine,
     line_raw: Cow<'a, str>,
 }
 
@@ -17,7 +18,7 @@ impl<'a> Line<'a> {
     pub fn into_owned(self) -> Line<'static> {
         Line {
             line_num: self.line_num,
-            line_type: self.line_type.clone(),
+            line_parsed: self.line_parsed.clone(),
             line_raw: Cow::Owned(self.line_raw.into_owned()),
         }
     }
@@ -26,8 +27,8 @@ impl<'a> Line<'a> {
         self.line_num
     }
 
-    pub fn get_line_type(&self) -> &EventLineType {
-        &self.line_type
+    pub fn get_line_type(&self) -> &ParsedLine {
+        &self.line_parsed
     }
 
     pub fn get_line_raw(&self) -> &Cow<'a, str> {
@@ -40,7 +41,7 @@ impl std::fmt::Display for Line<'_> {
         write!(
             f,
             "line #{}, type '{}': '{}'",
-            self.line_num, self.line_type, self.line_raw
+            self.line_num, self.line_parsed, self.line_raw
         )
     }
 }
@@ -98,10 +99,10 @@ impl<'a> Iterator for Reader<'a> {
             None => self.contents,
         };
 
-        Some(match line.parse::<EventLineType>() {
+        Some(match line.parse::<ParsedLine>() {
             Ok(line_type) => Ok(Line {
                 line_num: self.current_line_num,
-                line_type,
+                line_parsed: line_type,
                 line_raw: Cow::Borrowed(line),
             }),
             Err(e) => Err(LineError {
@@ -125,6 +126,7 @@ pub enum EventDate {
 pub enum EventLocation {
     Virtual,
     VirtualWithLocation(String),
+    Hybrid(String),
     InPerson,
 }
 
@@ -148,6 +150,104 @@ pub struct EventListing {
     event_instances: Vec<Event>,
 }
 
-type EventsByRegion = HashMap<String, Vec<Event>>;
+const REGION_HEADERS: [&str; 7] = [
+    "### Virtual",
+    "### Africa",
+    "### Asia",
+    "### Europe",
+    "### North America",
+    "### Oceania",
+    "### South America",
+];
 
-pub fn get_events(reader: Reader) -> Result<EventsByRegion, LineError> {}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LineParseError {
+    PatternNotMatched(String),
+    InvalidDate(chrono::format::ParseError),
+    InvalidUrl(url::ParseError),
+    UnknownRegion(String),
+    InvalidLinkLabel(String),
+    UrlContainsTracker(Url),
+    ParseFailed(String),
+}
+
+impl From<chrono::format::ParseError> for LineParseError {
+    fn from(value: chrono::format::ParseError) -> Self {
+        Self::InvalidDate(value)
+    }
+}
+
+impl From<nom::Err<nom::error::Error<&str>>> for LineParseError {
+    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+        match value {
+            nom::Err::Error(e) | nom::Err::Failure(e) => {
+                Self::ParseFailed(format!("failed to parse: {}", e))
+            }
+            nom::Err::Incomplete(_) => Self::ParseFailed("incomplete input".to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ParsedLine {
+    /// A newline
+    Newline,
+    /// Start of the events section, "## Upcoming Events"
+    StartEventSection,
+    /// The date range in the events section, "Rusty Events between..."
+    EventsDateRange { start: NaiveDate, end: NaiveDate },
+    /// Header of a section, we use these for the regions, like "### Virtual", "### Asia"...
+    RegionHeader(Region),
+    /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
+    EventOverview {
+        date: EventDate,
+        location: EventLocation,
+        groups: Vec<EventGroup>,
+    },
+    /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
+    EventLinks { events: Vec<Event> },
+    /// End of the event section "If you are running a Rust event please add..."
+    EndEventSection,
+}
+
+impl FromStr for ParsedLine {
+    type Err = LineParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Ok(Self::Newline);
+        }
+
+        if s == "## Upcoming Events" {
+            return Ok(Self::StartEventSection);
+        }
+
+        if s == "If you are running a Rust event please add it to the [calendar] to get" {
+            return Ok(Self::EndEventSection);
+        }
+
+        if let Some(s) = s.strip_prefix("Rusty Events between ") {
+            // TODO: figure out nom error types a bit better so we don't have to swallow the error here
+            let (s, start) = extract_date(s)?;
+            let start = start.parse::<NaiveDate>()?;
+
+            let (s, _) = tag(" - ")(s)?;
+
+            let (_, end) = extract_date(s)?;
+            let end = end.parse::<NaiveDate>()?;
+
+            return Ok(Self::EventsDateRange { start, end });
+        }
+
+        if REGION_HEADERS.contains(&s) {
+            let (_, region) = tag("### ")(s)?;
+            return Ok(Self::RegionHeader(region.to_owned()));
+        }
+
+        todo!()
+    }
+}
+
+fn extract_date(input: &str) -> IResult<&str, &str> {
+    take_while1(|c: char| c.is_ascii_digit() || c == '-')(input)
+}

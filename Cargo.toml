@@ -7,6 +7,7 @@ edition = "2021"
 chrono = "0.4.38"
 clap = { version = "4.5.20", features = ["derive"] }
 log = "0.4.22"
+nom = "8.0.0"
 regex = "1.11.1"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 url = "2.5.3"
