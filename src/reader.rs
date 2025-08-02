@@ -1,7 +1,14 @@
 use std::{borrow::Cow, collections::HashMap, str::FromStr};
 
 use chrono::{NaiveDate, NaiveWeek};
-use nom::{bytes::complete::tag, bytes::complete::take_while1, combinator::map_res, IResult};
+use nom::{
+    bytes::complete::{tag, take_until, take_while1},
+    character::complete::{char, multispace0, space0},
+    combinator::{map_res, opt},
+    multi::separated_list1,
+    sequence::{delimited, preceded},
+    IResult, Parser,
+};
 use url::Url;
 
 use crate::line_types::{EventLineType, LineParseError};
@@ -62,6 +69,8 @@ impl std::fmt::Display for LineError {
         )
     }
 }
+
+impl std::error::Error for LineError {}
 
 // TODO: where to put nice interface to collect events from?
 #[derive(Debug)]
@@ -127,7 +136,7 @@ pub enum EventLocation {
     Virtual,
     VirtualWithLocation(String),
     Hybrid(String),
-    InPerson,
+    InPerson(String),
 }
 
 #[derive(Debug)]
@@ -136,9 +145,33 @@ pub struct EventGroup {
     url: Url,
 }
 
+impl From<MarkdownLink> for EventGroup {
+    fn from(value: MarkdownLink) -> Self {
+        Self {
+            name: value.label,
+            url: value.url,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Event {
     name: String,
+    url: Url,
+}
+
+impl From<MarkdownLink> for Event {
+    fn from(value: MarkdownLink) -> Self {
+        Self {
+            name: value.label,
+            url: value.url,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MarkdownLink {
+    label: String,
     url: Url,
 }
 
@@ -162,18 +195,20 @@ const REGION_HEADERS: [&str; 7] = [
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LineParseError {
-    PatternNotMatched(String),
     InvalidDate(chrono::format::ParseError),
     InvalidUrl(url::ParseError),
-    UnknownRegion(String),
-    InvalidLinkLabel(String),
-    UrlContainsTracker(Url),
     ParseFailed(String),
 }
 
 impl From<chrono::format::ParseError> for LineParseError {
     fn from(value: chrono::format::ParseError) -> Self {
         Self::InvalidDate(value)
+    }
+}
+
+impl From<url::ParseError> for LineParseError {
+    fn from(value: url::ParseError) -> Self {
+        Self::InvalidUrl(value)
     }
 }
 
@@ -188,7 +223,7 @@ impl From<nom::Err<nom::error::Error<&str>>> for LineParseError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug)]
 pub enum ParsedLine {
     /// A newline
     Newline,
@@ -197,7 +232,8 @@ pub enum ParsedLine {
     /// The date range in the events section, "Rusty Events between..."
     EventsDateRange { start: NaiveDate, end: NaiveDate },
     /// Header of a section, we use these for the regions, like "### Virtual", "### Asia"...
-    RegionHeader(Region),
+    // TODO: move to a region type?
+    RegionHeader(String),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
     EventOverview {
         date: EventDate,
@@ -226,28 +262,129 @@ impl FromStr for ParsedLine {
             return Ok(Self::EndEventSection);
         }
 
+        // TODO: move to nom tag to be consistent
         if let Some(s) = s.strip_prefix("Rusty Events between ") {
-            // TODO: figure out nom error types a bit better so we don't have to swallow the error here
-            let (s, start) = extract_date(s)?;
-            let start = start.parse::<NaiveDate>()?;
-
+            let (s, start) = parse_date(s)?;
             let (s, _) = tag(" - ")(s)?;
-
-            let (_, end) = extract_date(s)?;
-            let end = end.parse::<NaiveDate>()?;
+            let (_, end) = parse_date(s)?;
 
             return Ok(Self::EventsDateRange { start, end });
         }
 
+        // TODO: refactor to be more nom-like
         if REGION_HEADERS.contains(&s) {
             let (_, region) = tag("### ")(s)?;
             return Ok(Self::RegionHeader(region.to_owned()));
         }
 
-        todo!()
+        if let (s, Some(_)) = opt(tag("* ")).parse(s)? {
+            // parsing as EventOverview, looks something like:
+            // "* 2024-10-23 | Austin, TX, US | [Rust ATX](https://www.meetup.com/rust-atx/)"
+            let (s, date) = parse_event_date(s)?;
+            let (s, _) = tag(" | ")(s)?;
+
+            let (s, location) = parse_location(s)?;
+            let (s, _) = tag(" | ")(s)?;
+
+            let mut links = Vec::new();
+            let (s, link) = parse_md_link(s)?;
+            links.push(link);
+
+            while let (s, Some(_)) = opt(tag(" + ")).parse(s)? {
+                let (s, link) = parse_md_link(s)?;
+                links.push(link);
+            }
+
+            let groups: Vec<EventGroup> = links.into_iter().map(|l| l.into()).collect();
+
+            return Ok(Self::EventOverview {
+                date,
+                location,
+                groups,
+            });
+        }
+
+        // TODO: what do multiple links here look like? i forget
+        if let (s, Some(_)) = opt(tag("    * ")).parse(s)? {
+            // parsing as EventLinks, looks like:
+            // "    * [**Ferris' Fika Forum #6**](https://www.meetup.com/stockholm-rust/events/303918943/)"
+            let (s, link) = parse_md_link(s)?;
+
+            // TODO: maybe find a better place for this?
+            if !link.label.starts_with("**") || !link.label.ends_with("**") {
+                return Err(LineParseError::ParseFailed(
+                    "event link is not bold".to_owned(),
+                ));
+            }
+
+            return Ok(Self::EventLinks {
+                events: vec![link.into()],
+            });
+        }
+
+        Err(LineParseError::ParseFailed(format!(
+            "failed to parse: {}",
+            s
+        )))
     }
 }
 
-fn extract_date(input: &str) -> IResult<&str, &str> {
-    take_while1(|c: char| c.is_ascii_digit() || c == '-')(input)
+// Parse a date like "2024-10-24"
+fn parse_date(input: &str) -> Result<(&str, NaiveDate), LineParseError> {
+    let (input, date) = take_while1(|c: char| c.is_ascii_digit() || c == '-')(input)?;
+    let date = date.parse::<NaiveDate>()?;
+    Ok((input, date))
+}
+
+// Parse an EventDate that can either be a single date like "2024-10-24", or a range like "2024-10-24 - 2024-10-27"
+fn parse_event_date(input: &str) -> Result<(&str, EventDate), LineParseError> {
+    let (input, start) = parse_date(input)?;
+
+    if let (input, Some(_)) = opt(tag(" - ")).parse(input)? {
+        let (input, end) = parse_date(input)?;
+        return Ok((input, EventDate::DateRange { start, end }));
+    }
+
+    Ok((input, EventDate::Date(start)))
+}
+
+fn parse_location(input: &str) -> Result<(&str, EventLocation), LineParseError> {
+    let mut location_in_parens = delimited(char('('), take_until(")"), char(')'));
+
+    // virtual events first, we expect them either with our without dates, like "Virtual" or "Virtual (Berlin, DE)"
+    if let (input, Some(_)) = opt(tag("Virtual")).parse(input)? {
+        let (input, location) = opt(location_in_parens).parse(input)?;
+        return match location {
+            Some(loc) => Ok((input, EventLocation::VirtualWithLocation(loc.to_owned()))),
+            None => Ok((input, EventLocation::Virtual)),
+        };
+    }
+
+    // hybrid events, expect them like "Hybrid (Berlin, DE)"
+    if let (input, Some(_)) = opt(tag("Hybrid")).parse(input)? {
+        let (input, location) = location_in_parens.parse(input)?;
+        return Ok((input, EventLocation::Hybrid(location.to_owned())));
+    }
+
+    // otherwise the event is just in person, so take everything up to the pipe delimiter
+    let (input, location) = take_until(" |")(input)?;
+
+    Ok((input, EventLocation::InPerson(location.to_owned())))
+}
+
+/// Parse a markdown link, like "[Rust ATX](https://www.meetup.com/rust-atx/)"
+fn parse_md_link(input: &str) -> Result<(&str, MarkdownLink), LineParseError> {
+    let (input, label) = delimited(char('['), take_until("]"), char(']')).parse(input)?;
+
+    // TODO: handle parens in urls properly, this will break currently
+    let (input, url) = delimited(char('('), take_until(")"), char(')')).parse(input)?;
+    let url = Url::parse(url)?;
+
+    Ok((
+        input,
+        MarkdownLink {
+            label: label.to_owned(),
+            url,
+        },
+    ))
 }
