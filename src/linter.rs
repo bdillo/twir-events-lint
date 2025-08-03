@@ -7,18 +7,12 @@ use crate::reader::{EventDate, EventOverview, Line, ParsedLine};
 
 // TODO:
 // - lint for empty regions
-// - clean up errors and error messages
-// - tests
-// - add tools for adding new events
 // - check for duplicated links
-// - make sure each location in virtual section starts with "virtual"
+// - check meetup urls don't have that tracker in them
 
 /// Linter errors
 #[derive(Debug, PartialEq, Eq)]
 pub enum LintError<'a> {
-    // UnexpectedDateRange {
-    //     line: Line<'a>,
-    // },
     // TODO: re-add expected types here somehow
     UnexpectedLineType {
         line: Line<'a>,
