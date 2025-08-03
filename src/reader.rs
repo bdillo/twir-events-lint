@@ -12,6 +12,7 @@ use nom::{
 use url::Url;
 
 /// Regional headers for events
+// TODO: fix these and remove md header part
 const REGION_HEADERS: [&str; 7] = [
     "### Virtual",
     "### Africa",
@@ -30,7 +31,7 @@ struct MarkdownLink {
 }
 
 /// Parsed event date, can be from a single date like "2025-08-03" or a date range like "2025-08-03 - 2025-08-05"
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EventDate {
     Date(NaiveDate),
     DateRange { start: NaiveDate, end: NaiveDate },
@@ -46,7 +47,7 @@ impl fmt::Display for EventDate {
 }
 
 /// Parsed event location, from things like "Virtual", "Virtual (Seattle, WA, US)", "Stockholm, SE", etc.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventLocation {
     Virtual,
     // TODO: make an actual location type for more validation
@@ -67,7 +68,7 @@ impl fmt::Display for EventLocation {
 }
 
 /// The group organizing the event with a link to their homepage, from things like "[Rust Nurnberg DE](https://www.meetup.com/rust-noris/)"
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventGroup {
     name: String,
     url: Url,
@@ -88,9 +89,62 @@ impl From<MarkdownLink> for EventGroup {
     }
 }
 
+// An event overview line, e.g. "* 2024-10-29 | Aarhus, DK | [Rust Aarhus](https://www.meetup.com/rust-aarhus/)"
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventOverview {
+    date: EventDate,
+    location: EventLocation,
+    groups: Vec<EventGroup>,
+}
+
+impl EventOverview {
+    pub fn date(&self) -> &EventDate {
+        &self.date
+    }
+
+    pub fn location(&self) -> &EventLocation {
+        &self.location
+    }
+
+    pub fn groups(&self) -> &[EventGroup] {
+        &self.groups
+    }
+}
+
+impl Ord for EventOverview {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // sort by start date if we have a date range
+        let date = match self.date {
+            EventDate::Date(date) => date,
+            EventDate::DateRange { start, end: _ } => start,
+        };
+
+        let other_date = match other.date {
+            EventDate::Date(date) => date,
+            EventDate::DateRange { start, end: _ } => start,
+        };
+
+        // first sort by date. if those are equal, use the string representation of the locations
+        date.cmp(&other_date)
+            .then_with(|| self.location.to_string().cmp(&other.location.to_string()))
+    }
+}
+
+impl PartialOrd for EventOverview {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for EventOverview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
 /// The actual event title and link to information specific to that event, from things like:
 /// "    * [**Rust Nürnberg online**](https://www.meetup.com/rust-noris/events/300820274/)"
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Event {
     name: String,
     url: Url,
@@ -115,12 +169,10 @@ impl From<MarkdownLink> for Event {
 /// "* 2024-10-29 | Aarhus, DK | [Rust Aarhus](https://www.meetup.com/rust-aarhus/)"
 /// "   * [**Hack Night**](https://www.meetup.com/rust-aarhus/events/303479865)"
 /// An event can have multiple groups hosting it and multiple links to the same event
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventListing {
-    date: EventDate,
-    location: EventLocation,
-    event_groups: Vec<EventGroup>,
-    event_instances: Vec<Event>,
+    overview: EventOverview,
+    events: Vec<Event>,
 }
 
 impl fmt::Display for EventListing {
@@ -151,7 +203,7 @@ impl std::error::Error for LineError {}
 
 /// A single line from the newsletter with its parsed representation
 /// Contains context useful for debugging if needed (like line number, raw line contents)
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line<'a> {
     line_num: u64,
     line_parsed: ParsedLine,
@@ -159,11 +211,11 @@ pub struct Line<'a> {
 }
 
 impl<'a> Line<'a> {
-    pub fn into_owned(self) -> Line<'static> {
+    pub fn to_owned(&self) -> Line<'static> {
         Line {
             line_num: self.line_num,
             line_parsed: self.line_parsed.clone(),
-            line_raw: Cow::Owned(self.line_raw.into_owned()),
+            line_raw: Cow::Owned(self.line_raw.clone().into_owned()),
         }
     }
 
@@ -235,7 +287,7 @@ impl std::error::Error for LineParseError {}
 
 /// A parsed line, these are the lines we expect to see in the event section, lines in other sections will probably fail to parse
 /// in most situations
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParsedLine {
     /// A newline
     Newline,
@@ -246,13 +298,9 @@ pub enum ParsedLine {
     /// Header of a section, we use these for the regions, like "### Virtual", "### Asia"...
     RegionHeader(String),
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
-    EventOverview {
-        date: EventDate,
-        location: EventLocation,
-        groups: Vec<EventGroup>,
-    },
+    EventOverview(EventOverview),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
-    EventLinks { events: Vec<Event> },
+    EventLinks(Vec<Event>),
     /// End of the event section "If you are running a Rust event please add..."
     EndEventSection,
 }
@@ -310,11 +358,12 @@ impl FromStr for ParsedLine {
 
             let groups: Vec<EventGroup> = links.into_iter().map(|l| l.into()).collect();
 
-            return Ok(Self::EventOverview {
+            let overview = EventOverview {
                 date,
                 location,
                 groups,
-            });
+            };
+            return Ok(Self::EventOverview(overview));
         }
 
         // TODO: what do multiple links here look like? i forget
@@ -330,9 +379,7 @@ impl FromStr for ParsedLine {
                 ));
             }
 
-            return Ok(Self::EventLinks {
-                events: vec![link.into()],
-            });
+            return Ok(Self::EventLinks(vec![link.into()]));
         }
 
         Err(LineParseError::ParseFailed(format!(
@@ -352,12 +399,8 @@ impl fmt::Display for ParsedLine {
                 &format!("EventsDateRange ({} - {})", start, end)
             }
             ParsedLine::RegionHeader(region) => &format!("RegionHeader ({})", region),
-            ParsedLine::EventOverview {
-                date,
-                location,
-                groups,
-            } => todo!(),
-            ParsedLine::EventLinks { events } => todo!(),
+            ParsedLine::EventOverview(overview) => todo!(),
+            ParsedLine::EventLinks(events) => todo!(),
             ParsedLine::EndEventSection => todo!(),
         };
         write!(f, "{}", s)
@@ -486,6 +529,6 @@ mod test {
         // `lines()` strips newlines for us, so an empty string == newline
         let line = "";
         let parsed = line.parse::<ParsedLine>().unwrap();
-        // assert_eq!(parsed, ParsedLine::Newline);
+        assert_eq!(parsed, ParsedLine::Newline);
     }
 }
