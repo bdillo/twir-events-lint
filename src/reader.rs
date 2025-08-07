@@ -3,11 +3,11 @@ use std::{borrow::Cow, str::FromStr};
 
 use chrono::NaiveDate;
 use nom::{
+    Parser,
     bytes::complete::{tag, take_until, take_while1},
     character::complete::char,
     combinator::opt,
     sequence::delimited,
-    Parser,
 };
 use url::Url;
 
@@ -478,6 +478,11 @@ pub struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub fn new(contents: &'a str) -> Self {
+        // TODO: pull this string out into a const somewhere as we reference it more than once
+        let events_start = contents
+            .find("## Upcoming Events")
+            .expect("no events section header found");
+        let contents = &contents[events_start..];
         Self {
             contents,
             current_line_num: 0,

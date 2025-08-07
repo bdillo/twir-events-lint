@@ -3,7 +3,7 @@ use std::fmt;
 use chrono::NaiveDate;
 use log::{debug, error};
 
-use crate::reader::{EventDate, EventOverview, Line, ParsedLine};
+use crate::reader::{EventDate, EventOverview, Line, ParsedLine, Reader};
 
 // TODO:
 // - lint for empty regions
@@ -12,35 +12,36 @@ use crate::reader::{EventDate, EventOverview, Line, ParsedLine};
 
 /// Linter errors
 #[derive(Debug, PartialEq, Eq)]
-pub enum LintError<'a> {
+pub enum LintError {
     // TODO: re-add expected types here somehow
+    DateRangeNotSet,
     UnexpectedLineType {
-        line: Line<'a>,
+        line: Line<'static>,
         linter_state: LinterState,
     },
     EventOutOfDateRange {
-        line: Line<'a>,
+        line: Line<'static>,
         event_date: EventDate,
         start: NaiveDate,
         end: NaiveDate,
     },
     EventOutOfOrder {
-        line: Line<'a>,
+        line: Line<'static>,
     },
     // TODO: add error message here?
     LintFailed,
     ExpectedRegionHeader {
-        line: Line<'a>,
+        line: Line<'static>,
     },
 }
 
-impl fmt::Display for LintError<'_> {
+impl fmt::Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let error_msg = match self {
-            Self::UnexpectedLineType { line, linter_state } => {
+            LintError::UnexpectedLineType { line, linter_state } => {
                 format!("linter in state '{}', found:\n{}", linter_state, line)
             }
-            Self::EventOutOfDateRange {
+            LintError::EventOutOfDateRange {
                 line,
                 event_date,
                 start,
@@ -51,27 +52,32 @@ impl fmt::Display for LintError<'_> {
                     event_date, start, end, line
                 )
             }
-            Self::EventOutOfOrder { line } => {
+            LintError::EventOutOfOrder { line } => {
                 format!(
                     "event should be after previous event date, not before\n{}",
                     line
                 )
             }
-            Self::LintFailed => "lint failed, see above for error details".to_owned(),
-            Self::ExpectedRegionHeader { line } => todo!(),
+            LintError::LintFailed => "lint failed, see above for error details".to_owned(),
+            LintError::ExpectedRegionHeader { line } => todo!(),
+            LintError::DateRangeNotSet => todo!(),
         };
 
         write!(f, "{}", error_msg)
     }
 }
 
-impl std::error::Error for LintError<'_> {}
+impl std::error::Error for LintError {}
 
 /// Overall state of the linter, keeps track of what section we are in
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LinterState {
+    /// Expecting the start of the event section
+    ExpectingStartEventSection,
+    /// Expecting the date range for the newletter's events
+    ExpectingEventsDateRange,
     /// Expecting a regional event section (e.g. Virtual, Asia, Europe, etc)
-    ExpectingRegion,
+    ExpectingRegionHeader,
     /// Expecting a date, location, and group event line
     ExpectingEventOverview,
     /// Expecting an event name and event link
@@ -82,17 +88,19 @@ pub enum LinterState {
 
 impl LinterState {
     fn new() -> Self {
-        Self::ExpectingRegion
+        Self::ExpectingStartEventSection
     }
 }
 
 impl fmt::Display for LinterState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            Self::ExpectingRegion => "ExpectingRegion",
-            Self::ExpectingEventOverview => "ExpectingEventOverview",
-            Self::ExpectingEventLinks => "ExpectingEventLinks",
-            Self::Done => "Done",
+            LinterState::ExpectingStartEventSection => "ExpectingStartEventSection",
+            LinterState::ExpectingEventsDateRange => "ExpectingEventsDateRange",
+            LinterState::ExpectingRegionHeader => "ExpectingRegion",
+            LinterState::ExpectingEventOverview => "ExpectingEventOverview",
+            LinterState::ExpectingEventLinks => "ExpectingEventLinks",
+            LinterState::Done => "Done",
         };
         write!(f, "{}", s)
     }
@@ -100,30 +108,31 @@ impl fmt::Display for LinterState {
 
 /// The state machine for linting the events section
 // TODO: keep track of newlines here, like in a counter? So we can lint for unexpected newlines between sections
+// TODO: move the reader back into the linter i think
 #[derive(Debug)]
-pub struct EventLinter<'a> {
+pub struct EventLinter {
     /// Current state of the linter
-    linter_state: LinterState,
+    state: LinterState,
     /// Start date for newsletter
-    start: NaiveDate,
+    start: Option<NaiveDate>,
     /// End date for newsletter
-    end: NaiveDate,
+    end: Option<NaiveDate>,
     /// Region we are currently reading
-    current_region: Option<&'a str>,
+    current_region: Option<String>,
     /// The last event's date and location in our current region. Used to make sure we have our events properly sorted
-    previous_overview: Option<&'a EventOverview>,
+    previous_overview: Option<EventOverview>,
     /// Current error count
-    error_count: u32,
+    error_count: u16,
     /// Maximum error count before bailing
-    error_limit: u32,
+    error_limit: u16,
 }
 
-impl<'a> EventLinter<'a> {
-    pub fn new(start: NaiveDate, end: NaiveDate, error_limit: u32) -> Self {
+impl EventLinter {
+    pub fn new(error_limit: u16) -> Self {
         Self {
-            linter_state: LinterState::new(),
-            start,
-            end,
+            state: LinterState::new(),
+            start: None,
+            end: None,
             current_region: None,
             previous_overview: None,
             error_count: 0,
@@ -131,15 +140,26 @@ impl<'a> EventLinter<'a> {
         }
     }
 
-    fn lint(&'a mut self, line: &'a Line<'a>) -> Result<(), LintError<'a>> {
+    pub fn lint(&mut self, mut reader: Reader) -> Result<(), LintError> {
+        while let Some(line) = reader.next() {
+            // TODO: fix
+            let line = line.unwrap();
+            self.lint_line(&line)?;
+        }
+        todo!()
+    }
+
+    fn lint_line(&mut self, line: &Line) -> Result<(), LintError> {
         debug!(
             "in state {}, linting line #{}",
-            self.linter_state.to_string(),
+            self.state.to_string(),
             line.num(),
         );
 
-        let lint_result = match &self.linter_state {
-            LinterState::ExpectingRegion => self.expecting_region(line),
+        let lint_result = match &self.state {
+            LinterState::ExpectingStartEventSection => todo!(),
+            LinterState::ExpectingEventsDateRange => todo!(),
+            LinterState::ExpectingRegionHeader => self.expecting_region(line),
             LinterState::ExpectingEventOverview => self.expecting_event_overview(line),
             LinterState::ExpectingEventLinks => self.expecting_event_links(line),
             LinterState::Done => Ok(()),
@@ -152,7 +172,7 @@ impl<'a> EventLinter<'a> {
 
                 // attempt to continue to parse, this could print out a bunch of errors in some cases
                 // setting the next state is a total guess here and only makes sense in a few states
-                self.linter_state = match self.linter_state {
+                self.state = match self.state {
                     LinterState::ExpectingEventOverview => LinterState::ExpectingEventLinks,
                     LinterState::ExpectingEventLinks => LinterState::ExpectingEventOverview,
                     _ => return Err(LintError::LintFailed),
@@ -173,58 +193,66 @@ impl<'a> EventLinter<'a> {
     }
 
     /// Helper to see if a given date falls within the newsletter's range
-    fn date_in_scope(&self, date: &NaiveDate) -> bool {
-        date >= &self.start || date <= &self.end
+    fn date_in_scope(&self, date: &NaiveDate) -> Result<bool, LintError> {
+        if let Some(start) = self.start
+            && let Some(end) = self.end
+        {
+            Ok(date >= &start || date <= &end)
+        } else {
+            Err(LintError::DateRangeNotSet)
+        }
     }
 
     /// Expecting a region header, newlines are ok here, as well as the end of the events section
-    fn expecting_region(&mut self, line: &'a Line) -> Result<(), LintError> {
+    fn expecting_region(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::Newline => Ok(()),
             ParsedLine::RegionHeader(region) => {
                 // TODO: check if region is already set
-                self.current_region = Some(&region);
-                self.linter_state = LinterState::ExpectingEventOverview;
+                self.current_region = Some(region.clone());
+                self.state = LinterState::ExpectingEventOverview;
                 Ok(())
             }
             ParsedLine::EndEventSection => {
-                self.linter_state = LinterState::Done;
+                self.state = LinterState::Done;
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
                 line: line.clone().to_owned(),
-                linter_state: self.linter_state,
+                linter_state: self.state,
             }),
         }
     }
 
-    fn expecting_event_overview(&mut self, line: &'a Line) -> Result<(), LintError> {
+    fn expecting_event_overview(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::EventOverview(overview) => {
                 // validate event is within date range
                 match overview.date() {
                     // if it's just a single date, make sure its within the newsletter's range
                     EventDate::Date(event_date) => {
-                        if !self.date_in_scope(event_date) {
+                        if !self.date_in_scope(event_date)? {
                             return Err(LintError::EventOutOfDateRange {
                                 line: line.to_owned(),
                                 event_date: *overview.date(),
-                                start: self.start,
-                                end: self.end,
+                                // TODO: cleanup
+                                start: self.start.unwrap(),
+                                end: self.end.unwrap(),
                             });
                         }
                     }
                     // if the event is a date range, see if either the start OR the end dates fall witin our range
                     EventDate::DateRange { start, end } => {
-                        let start_in_scope = self.date_in_scope(start);
-                        let end_in_scope = self.date_in_scope(end);
+                        let start_in_scope = self.date_in_scope(start)?;
+                        let end_in_scope = self.date_in_scope(end)?;
 
                         if !(start_in_scope && end_in_scope) {
                             return Err(LintError::EventOutOfDateRange {
                                 line: line.to_owned(),
                                 event_date: *overview.date(),
-                                start: self.start,
-                                end: self.end,
+                                // TODO: cleanup
+                                start: self.start.unwrap(),
+                                end: self.end.unwrap(),
                             });
                         }
                     }
@@ -240,14 +268,14 @@ impl<'a> EventLinter<'a> {
                 }
 
                 // and save our previous event so we can compare it when looking at the next event
-                self.previous_overview = Some(overview);
-                self.linter_state = LinterState::ExpectingEventLinks;
+                self.previous_overview = Some(overview.clone());
+                self.state = LinterState::ExpectingEventLinks;
 
                 Ok(())
             }
             // If we hit a newline it should mean that we are done with a given regional section (Virtual, Asia, etc)
             ParsedLine::Newline => {
-                self.linter_state = LinterState::ExpectingRegion;
+                self.state = LinterState::ExpectingRegionHeader;
                 // and reset our previous event to None, ordering is only internal to a region section
                 self.previous_overview = None;
                 // and reset our region to None as well
@@ -256,20 +284,20 @@ impl<'a> EventLinter<'a> {
             }
             _ => Err(LintError::UnexpectedLineType {
                 line: line.to_owned(),
-                linter_state: self.linter_state,
+                linter_state: self.state,
             }),
         }
     }
 
-    fn expecting_event_links(&mut self, line: &'a Line) -> Result<(), LintError<'a>> {
+    fn expecting_event_links(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::EventLinks(_links) => {
-                self.linter_state = LinterState::ExpectingEventOverview;
+                self.state = LinterState::ExpectingEventOverview;
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
                 line: line.to_owned(),
-                linter_state: self.linter_state,
+                linter_state: self.state,
             }),
         }
     }

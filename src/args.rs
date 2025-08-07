@@ -11,11 +11,11 @@ pub struct Args {
     #[arg(short, long)]
     new_events_file: Option<PathBuf>,
     /// Enable debug logging
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     debug: bool,
     /// Error limit before bailing - otherwise you could have a lot of output if the linter gets in a weird state
     #[arg(short = 'l', long, default_value_t = 20)]
-    error_limit: u32,
+    error_limit: u16,
 }
 
 impl Args {
@@ -31,7 +31,7 @@ impl Args {
         self.debug
     }
 
-    pub fn error_limit(&self) -> u32 {
+    pub fn error_limit(&self) -> u16 {
         self.error_limit
     }
 }
