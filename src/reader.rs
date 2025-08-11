@@ -2,6 +2,7 @@ use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 
 use chrono::NaiveDate;
+use log::debug;
 use nom::{
     Parser,
     bytes::complete::{tag, take_until, take_while1},
@@ -89,12 +90,35 @@ impl From<MarkdownLink> for EventGroup {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventGroups(Vec<EventGroup>);
+
+impl std::ops::Deref for EventGroups {
+    type Target = [EventGroup];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl std::fmt::Display for EventGroups {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = self
+            .0
+            .iter()
+            .map(|eg| eg.to_string())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        write!(f, "{result}")
+    }
+}
+
 // An event overview line, e.g. "* 2024-10-29 | Aarhus, DK | [Rust Aarhus](https://www.meetup.com/rust-aarhus/)"
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventOverview {
     date: EventDate,
     location: EventLocation,
-    groups: Vec<EventGroup>,
+    groups: EventGroups,
 }
 
 impl EventOverview {
@@ -138,7 +162,11 @@ impl PartialOrd for EventOverview {
 
 impl fmt::Display for EventOverview {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        let date = self.date;
+        let location = &self.location;
+        let groups = &self.groups;
+
+        write!(f, "{date} | {location} | {groups}")
     }
 }
 
@@ -165,6 +193,29 @@ impl From<MarkdownLink> for Event {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Events(Vec<Event>);
+
+impl std::ops::Deref for Events {
+    type Target = [Event];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Display for Events {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = self
+            .0
+            .iter()
+            .map(|eg| eg.to_string())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        write!(f, "{result}")
+    }
+}
+
 /// A full parsed event with all information from the events section, e.g.:
 /// "* 2024-10-29 | Aarhus, DK | [Rust Aarhus](https://www.meetup.com/rust-aarhus/)"
 /// "   * [**Hack Night**](https://www.meetup.com/rust-aarhus/events/303479865)"
@@ -172,12 +223,19 @@ impl From<MarkdownLink> for Event {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventListing {
     overview: EventOverview,
-    events: Vec<Event>,
+    events: Events,
 }
 
 impl fmt::Display for EventListing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        let mut formatted = "* ".to_owned();
+        formatted.push_str(&self.overview.to_string());
+        formatted.push('\n');
+        formatted.push_str("    * ");
+        formatted.push_str(&self.events.to_string());
+        formatted.push('\n');
+
+        write!(f, "{}", formatted)
     }
 }
 
@@ -266,7 +324,7 @@ impl From<nom::Err<nom::error::Error<&str>>> for LineParseError {
     fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
         match value {
             nom::Err::Error(e) | nom::Err::Failure(e) => {
-                Self::ParseFailed(format!("failed to parse: {}", e))
+                Self::ParseFailed(format!("nom failed to parse: {e}"))
             }
             nom::Err::Incomplete(_) => Self::ParseFailed("incomplete input".to_string()),
         }
@@ -276,9 +334,9 @@ impl From<nom::Err<nom::error::Error<&str>>> for LineParseError {
 impl fmt::Display for LineParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LineParseError::InvalidDate(e) => write!(f, "invalid date: {}", e),
-            LineParseError::InvalidUrl(e) => write!(f, "invalid url: {}", e),
-            LineParseError::ParseFailed(e) => write!(f, "failed to parse line: {}", e),
+            LineParseError::InvalidDate(e) => write!(f, "invalid date: {e}"),
+            LineParseError::InvalidUrl(e) => write!(f, "invalid url: {e}"),
+            LineParseError::ParseFailed(e) => write!(f, "failed to parse line: {e}"),
         }
     }
 }
@@ -300,9 +358,7 @@ pub enum ParsedLine {
     /// First line of an event with the date, location, and group link "* 2024-10-24 | Virtual | [Women in Rust]..."
     EventOverview(EventOverview),
     /// Event name and link to specific event " * [**Part 4 of 4 - Hackathon Showcase: Final Projects and Presentations**]..."
-    EventLinks(Vec<Event>),
-    /// End of the event section "If you are running a Rust event please add..."
-    EndEventSection,
+    EventLinks(Events),
 }
 
 impl FromStr for ParsedLine {
@@ -316,10 +372,6 @@ impl FromStr for ParsedLine {
 
         if s == "## Upcoming Events" {
             return Ok(Self::StartEventSection);
-        }
-
-        if s == "If you are running a Rust event please add it to the [calendar] to get" {
-            return Ok(Self::EndEventSection);
         }
 
         // TODO: move to nom tag to be consistent
@@ -351,12 +403,21 @@ impl FromStr for ParsedLine {
             links.push(link);
 
             // FIXME: is this right?
-            while let (s, Some(_)) = opt(tag(" + ")).parse(s)? {
-                let (s, link) = parse_md_link(s)?;
-                links.push(link);
+            let mut remaining = s;
+            loop {
+                let (s, tag) = opt(tag(" + ")).parse(remaining)?;
+
+                if tag.is_some() {
+                    let (s, link) = parse_md_link(s)?;
+                    remaining = s;
+                    links.push(link);
+                } else {
+                    break;
+                }
             }
 
             let groups: Vec<EventGroup> = links.into_iter().map(|l| l.into()).collect();
+            let groups = EventGroups(groups);
 
             let overview = EventOverview {
                 date,
@@ -370,7 +431,7 @@ impl FromStr for ParsedLine {
         if let (s, Some(_)) = opt(tag("    * ")).parse(s)? {
             // parsing as EventLinks, looks like:
             // "    * [**Ferris' Fika Forum #6**](https://www.meetup.com/stockholm-rust/events/303918943/)"
-            let (s, link) = parse_md_link(s)?;
+            let (_, link) = parse_md_link(s)?;
 
             // TODO: maybe find a better place for this?
             if !link.label.starts_with("**") || !link.label.ends_with("**") {
@@ -379,31 +440,28 @@ impl FromStr for ParsedLine {
                 ));
             }
 
-            return Ok(Self::EventLinks(vec![link.into()]));
+            return Ok(Self::EventLinks(Events(vec![link.into()])));
         }
 
-        Err(LineParseError::ParseFailed(format!(
-            "failed to parse: {}",
-            s
-        )))
+        Err(LineParseError::ParseFailed(
+            format!("failed to parse: {s}",),
+        ))
     }
 }
 
 impl fmt::Display for ParsedLine {
-    // TODO: finish
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             ParsedLine::Newline => "Newline",
             ParsedLine::StartEventSection => "StartEventsSection",
             ParsedLine::EventsDateRange { start, end } => {
-                &format!("EventsDateRange ({} - {})", start, end)
+                &format!("EventsDateRange ({start} - {end})")
             }
-            ParsedLine::RegionHeader(region) => &format!("RegionHeader ({})", region),
-            ParsedLine::EventOverview(overview) => todo!(),
-            ParsedLine::EventLinks(events) => todo!(),
-            ParsedLine::EndEventSection => todo!(),
+            ParsedLine::RegionHeader(region) => &format!("RegionHeader ({region})"),
+            ParsedLine::EventOverview(overview) => &format!("EventOverview ({overview})"),
+            ParsedLine::EventLinks(events) => &format!("EventLinks ({events})"),
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -428,7 +486,7 @@ fn parse_event_date(input: &str) -> Result<(&str, EventDate), LineParseError> {
 
 /// Parse an EventLocation like "Virtual", "Virtual (Seattle, WA, US)", "Hamburg, DE", etc.
 fn parse_location(input: &str) -> Result<(&str, EventLocation), LineParseError> {
-    let mut location_in_parens = delimited(char('('), take_until(")"), char(')'));
+    let mut location_in_parens = delimited(tag(" ("), take_until(")"), char(')'));
 
     // virtual events first, we expect them either with our without dates, like "Virtual" or "Virtual (Berlin, DE)"
     if let (input, Some(_)) = opt(tag("Virtual")).parse(input)? {
@@ -482,10 +540,17 @@ impl<'a> Reader<'a> {
         let events_start = contents
             .find("## Upcoming Events")
             .expect("no events section header found");
+        let current_line_num = contents[..events_start].lines().count() as u64;
         let contents = &contents[events_start..];
+
+        let events_end = contents
+            .find("If you are running a Rust event please add it to the [calendar] to get")
+            .expect("no events section end found");
+        let contents = &contents[..events_end];
+
         Self {
             contents,
-            current_line_num: 0,
+            current_line_num,
         }
     }
 }

@@ -28,11 +28,7 @@ pub enum LintError {
     EventOutOfOrder {
         line: Line<'static>,
     },
-    // TODO: add error message here?
-    LintFailed,
-    ExpectedRegionHeader {
-        line: Line<'static>,
-    },
+    LintFailed(String),
 }
 
 impl fmt::Display for LintError {
@@ -58,9 +54,8 @@ impl fmt::Display for LintError {
                     line
                 )
             }
-            LintError::LintFailed => "lint failed, see above for error details".to_owned(),
-            LintError::ExpectedRegionHeader { line } => todo!(),
-            LintError::DateRangeNotSet => todo!(),
+            LintError::LintFailed(msg) => format!("lint failed: {msg}"),
+            LintError::DateRangeNotSet => format!("no newsletter date range found"),
         };
 
         write!(f, "{}", error_msg)
@@ -82,8 +77,6 @@ pub enum LinterState {
     ExpectingEventOverview,
     /// Expecting an event name and event link
     ExpectingEventLinks,
-    /// We have finished reading the entire event section
-    Done,
 }
 
 impl LinterState {
@@ -100,7 +93,6 @@ impl fmt::Display for LinterState {
             LinterState::ExpectingRegionHeader => "ExpectingRegion",
             LinterState::ExpectingEventOverview => "ExpectingEventOverview",
             LinterState::ExpectingEventLinks => "ExpectingEventLinks",
-            LinterState::Done => "Done",
         };
         write!(f, "{}", s)
     }
@@ -140,29 +132,41 @@ impl EventLinter {
         }
     }
 
-    pub fn lint(&mut self, mut reader: Reader) -> Result<(), LintError> {
-        while let Some(line) = reader.next() {
+    pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
+        for line in reader {
             // TODO: fix
             let line = line.unwrap();
             self.lint_line(&line)?;
         }
-        todo!()
+
+        if self.state != LinterState::ExpectingRegionHeader {
+            return Err(LintError::LintFailed(
+                "not in expected state when finished".to_owned(),
+            ));
+        }
+
+        if self.error_count > 0 {
+            Err(LintError::LintFailed(
+                "see above logs for lint errors".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn lint_line(&mut self, line: &Line) -> Result<(), LintError> {
-        debug!(
-            "in state {}, linting line #{}",
-            self.state.to_string(),
-            line.num(),
-        );
+        // debug!(
+        //     "in state {}, linting line #{}",
+        //     self.state.to_string(),
+        //     line.num(),
+        // );
 
         let lint_result = match &self.state {
-            LinterState::ExpectingStartEventSection => todo!(),
-            LinterState::ExpectingEventsDateRange => todo!(),
+            LinterState::ExpectingStartEventSection => self.expecting_start_event_section(line),
+            LinterState::ExpectingEventsDateRange => self.expecting_events_date_range(line),
             LinterState::ExpectingRegionHeader => self.expecting_region(line),
             LinterState::ExpectingEventOverview => self.expecting_event_overview(line),
             LinterState::ExpectingEventLinks => self.expecting_event_links(line),
-            LinterState::Done => Ok(()),
         };
 
         match lint_result {
@@ -175,7 +179,12 @@ impl EventLinter {
                 self.state = match self.state {
                     LinterState::ExpectingEventOverview => LinterState::ExpectingEventLinks,
                     LinterState::ExpectingEventLinks => LinterState::ExpectingEventOverview,
-                    _ => return Err(LintError::LintFailed),
+                    _ => {
+                        return Err(LintError::LintFailed(format!(
+                            "in non-recoverable state {}",
+                            self.state
+                        )));
+                    }
                 };
 
                 self.error_count += 1;
@@ -183,8 +192,9 @@ impl EventLinter {
                 // if we reach this many errors something has probably gone very wrong, so just exit early
                 // rather than overwhelming the output with more error messages
                 if self.error_count == self.error_limit {
-                    error!("reached our maximum error limit, bailing");
-                    Err(LintError::LintFailed)
+                    Err(LintError::LintFailed(
+                        "reached our maximum error limit, bailing".to_owned(),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -203,6 +213,30 @@ impl EventLinter {
         }
     }
 
+    fn expecting_start_event_section(&mut self, line: &Line) -> Result<(), LintError> {
+        // TODO: cleanup
+        if line.parsed() == &ParsedLine::StartEventSection {
+            self.state = LinterState::ExpectingEventsDateRange
+        }
+        Ok(())
+    }
+
+    fn expecting_events_date_range(&mut self, line: &Line) -> Result<(), LintError> {
+        match line.parsed() {
+            ParsedLine::Newline => Ok(()),
+            ParsedLine::EventsDateRange { start, end } => {
+                self.start = Some(*start);
+                self.end = Some(*end);
+                self.state = LinterState::ExpectingRegionHeader;
+                Ok(())
+            }
+            _ => Err(LintError::UnexpectedLineType {
+                line: line.to_owned(),
+                linter_state: self.state,
+            }),
+        }
+    }
+
     /// Expecting a region header, newlines are ok here, as well as the end of the events section
     fn expecting_region(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
@@ -211,10 +245,6 @@ impl EventLinter {
                 // TODO: check if region is already set
                 self.current_region = Some(region.clone());
                 self.state = LinterState::ExpectingEventOverview;
-                Ok(())
-            }
-            ParsedLine::EndEventSection => {
-                self.state = LinterState::Done;
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
