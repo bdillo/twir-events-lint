@@ -41,8 +41,8 @@ pub enum EventDate {
 impl fmt::Display for EventDate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventDate::Date(date) => write!(f, "{}", date),
-            EventDate::DateRange { start, end } => write!(f, "{} - {}", start, end),
+            EventDate::Date(date) => write!(f, "{date}"),
+            EventDate::DateRange { start, end } => write!(f, "{start} - {end}"),
         }
     }
 }
@@ -61,9 +61,9 @@ impl fmt::Display for EventLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EventLocation::Virtual => f.write_str("Virtual"),
-            EventLocation::VirtualWithLocation(location) => write!(f, "Virtual ({})", location),
-            EventLocation::Hybrid(location) => write!(f, "Hybrid ({})", location),
-            EventLocation::InPerson(location) => write!(f, "{}", location),
+            EventLocation::VirtualWithLocation(location) => write!(f, "Virtual ({location})"),
+            EventLocation::Hybrid(location) => write!(f, "Hybrid ({location})"),
+            EventLocation::InPerson(location) => write!(f, "{location}"),
         }
     }
 }
@@ -180,7 +180,8 @@ pub struct Event {
 
 impl fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[**{}**]({})", self.name, self.url)
+        // write!(f, "[**{}**]({})", self.name, self.url)
+        write!(f, "[{}]({})", self.name, self.url)
     }
 }
 
@@ -235,7 +236,16 @@ impl fmt::Display for EventListing {
         formatted.push_str(&self.events.to_string());
         formatted.push('\n');
 
-        write!(f, "{}", formatted)
+        write!(f, "{formatted}")
+    }
+}
+
+impl From<(EventOverview, Events)> for EventListing {
+    fn from(value: (EventOverview, Events)) -> Self {
+        Self {
+            overview: value.0,
+            events: value.1,
+        }
     }
 }
 
@@ -385,7 +395,7 @@ impl FromStr for ParsedLine {
 
         // TODO: refactor to be more nom-like
         if REGION_HEADERS.contains(&s) {
-            let (_, region) = tag("### ")(s)?;
+            let (region, _) = tag("### ")(s)?;
             return Ok(Self::RegionHeader(region.to_owned()));
         }
 

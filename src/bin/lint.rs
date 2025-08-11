@@ -18,9 +18,16 @@ fn main() {
     let md_contents = fs::read_to_string(args.draft()).unwrap();
     let reader = Reader::new(&md_contents);
 
-    let mut event_linter = EventLinter::new(args.error_limit());
-    match event_linter.lint(reader) {
+    let mut linter = EventLinter::new(args.error_limit());
+    match linter.lint(reader) {
         Ok(_) => info!("lgtm!"),
         Err(e) => error!("{}", e),
+    }
+
+    for (region, events) in linter.events() {
+        println!("{region}");
+        for event in events {
+            print!("{event}");
+        }
     }
 }

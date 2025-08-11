@@ -1,9 +1,9 @@
-use std::fmt;
+use std::{any::Any, collections::HashMap, fmt};
 
 use chrono::NaiveDate;
 use log::{debug, error};
 
-use crate::reader::{EventDate, EventOverview, Line, ParsedLine, Reader};
+use crate::reader::{EventDate, EventListing, EventOverview, Line, ParsedLine, Reader};
 
 // TODO:
 // - lint for empty regions
@@ -35,7 +35,7 @@ impl fmt::Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let error_msg = match self {
             LintError::UnexpectedLineType { line, linter_state } => {
-                format!("linter in state '{}', found:\n{}", linter_state, line)
+                format!("linter in state '{linter_state}', found:\n{line}")
             }
             LintError::EventOutOfDateRange {
                 line,
@@ -44,21 +44,17 @@ impl fmt::Display for LintError {
                 end,
             } => {
                 format!(
-                    "event date '{}' does not fall within newsletter date range '{} - {}'\n{}",
-                    event_date, start, end, line
+                    "event date '{event_date}' does not fall within newsletter date range '{start} - {end}'\n{line}"
                 )
             }
             LintError::EventOutOfOrder { line } => {
-                format!(
-                    "event should be after previous event date, not before\n{}",
-                    line
-                )
+                format!("event should be after previous event date, not before\n{line}")
             }
             LintError::LintFailed(msg) => format!("lint failed: {msg}"),
-            LintError::DateRangeNotSet => format!("no newsletter date range found"),
+            LintError::DateRangeNotSet => "no newsletter date range found".to_owned(),
         };
 
-        write!(f, "{}", error_msg)
+        write!(f, "{error_msg}")
     }
 }
 
@@ -94,7 +90,7 @@ impl fmt::Display for LinterState {
             LinterState::ExpectingEventOverview => "ExpectingEventOverview",
             LinterState::ExpectingEventLinks => "ExpectingEventLinks",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -111,12 +107,15 @@ pub struct EventLinter {
     end: Option<NaiveDate>,
     /// Region we are currently reading
     current_region: Option<String>,
-    /// The last event's date and location in our current region. Used to make sure we have our events properly sorted
-    previous_overview: Option<EventOverview>,
+    /// An event's date and location in our current region. Used to make sure we have our events properly sorted, also
+    /// stores the `EventOverview` until we reach the `EventLinks`
+    overview: Option<EventOverview>,
     /// Current error count
     error_count: u16,
     /// Maximum error count before bailing
     error_limit: u16,
+    /// Collected `EventListing`s by region, in case we want to use them outside the linter
+    events: HashMap<String, Vec<EventListing>>,
 }
 
 impl EventLinter {
@@ -126,10 +125,15 @@ impl EventLinter {
             start: None,
             end: None,
             current_region: None,
-            previous_overview: None,
+            overview: None,
             error_count: 0,
             error_limit,
+            events: HashMap::new(),
         }
+    }
+
+    pub fn events(&self) -> &HashMap<String, Vec<EventListing>> {
+        &self.events
     }
 
     pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
@@ -155,11 +159,11 @@ impl EventLinter {
     }
 
     fn lint_line(&mut self, line: &Line) -> Result<(), LintError> {
-        // debug!(
-        //     "in state {}, linting line #{}",
-        //     self.state.to_string(),
-        //     line.num(),
-        // );
+        debug!(
+            "in state {}, linting line #{}",
+            self.state.to_string(),
+            line.num(),
+        );
 
         let lint_result = match &self.state {
             LinterState::ExpectingStartEventSection => self.expecting_start_event_section(line),
@@ -181,7 +185,7 @@ impl EventLinter {
                     LinterState::ExpectingEventLinks => LinterState::ExpectingEventOverview,
                     _ => {
                         return Err(LintError::LintFailed(format!(
-                            "in non-recoverable state {}",
+                            "in non-recoverable state {}, bailing",
                             self.state
                         )));
                     }
@@ -289,7 +293,7 @@ impl EventLinter {
                 }
 
                 // if there is a previous event, compare to make sure our current one is later than the previous one
-                if let Some(prev_overview) = &self.previous_overview {
+                if let Some(prev_overview) = &self.overview {
                     if overview < prev_overview {
                         return Err(LintError::EventOutOfOrder {
                             line: line.to_owned(),
@@ -298,7 +302,7 @@ impl EventLinter {
                 }
 
                 // and save our previous event so we can compare it when looking at the next event
-                self.previous_overview = Some(overview.clone());
+                self.overview = Some(overview.clone());
                 self.state = LinterState::ExpectingEventLinks;
 
                 Ok(())
@@ -307,7 +311,7 @@ impl EventLinter {
             ParsedLine::Newline => {
                 self.state = LinterState::ExpectingRegionHeader;
                 // and reset our previous event to None, ordering is only internal to a region section
-                self.previous_overview = None;
+                self.overview = None;
                 // and reset our region to None as well
                 self.current_region = None;
                 Ok(())
@@ -321,8 +325,23 @@ impl EventLinter {
 
     fn expecting_event_links(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
-            ParsedLine::EventLinks(_links) => {
+            ParsedLine::EventLinks(events) => {
                 self.state = LinterState::ExpectingEventOverview;
+
+                // we have the event overview and links now, so we can return a full `EventListing` in case we want to
+                // do something with it outside of the linter
+                // TODO: cleanup expect
+                let listing = (
+                    self.overview.clone().expect("no overview set"),
+                    events.to_owned(),
+                )
+                    .into();
+
+                self.events
+                    .entry(self.current_region.clone().expect("no region set"))
+                    .or_default()
+                    .push(listing);
+
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
