@@ -211,7 +211,7 @@ impl EventLinter {
         if let Some(start) = self.start
             && let Some(end) = self.end
         {
-            Ok(date >= &start || date <= &end)
+            Ok(date >= &start && date <= &end)
         } else {
             Err(LintError::DateRangeNotSet)
         }
@@ -261,6 +261,8 @@ impl EventLinter {
     fn expecting_event_overview(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::EventOverview(overview) => {
+                // save our previous event so we can compare it when looking at the next event
+                self.overview = Some(overview.clone());
                 // validate event is within date range
                 match overview.date() {
                     // if it's just a single date, make sure its within the newsletter's range
