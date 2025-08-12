@@ -24,6 +24,13 @@ fn main() {
         Err(e) => error!("{}", e),
     }
 
+    let Some(new_events_file) = args.new_events_file() else {
+        std::process::exit(0);
+    };
+
+    // TODO: add merging stuff
+    println!("{new_events_file:?}");
+
     for (region, events) in linter.events() {
         println!("{region}");
         for event in events {
