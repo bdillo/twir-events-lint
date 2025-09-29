@@ -24,8 +24,9 @@ fn main() {
         Err(e) => error!("{}", e),
     }
 
-    let Some(new_events_file) = args.new_events_file() else {
-        std::process::exit(0);
+    let new_events_file = match args.new_events_file() {
+        Some(path) => path,
+        None => std::process::exit(0),
     };
 
     // TODO: add merging stuff

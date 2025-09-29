@@ -1,9 +1,10 @@
-use std::{any::Any, collections::HashMap, fmt};
-
 use chrono::NaiveDate;
 use log::{debug, error};
 
-use crate::reader::{EventDate, EventListing, EventOverview, Line, ParsedLine, Reader};
+use crate::{
+    events::{EventDate, EventOverview, EventsByRegion, Region},
+    reader::{Line, ParsedLine, Reader},
+};
 
 // TODO:
 // - lint for empty regions
@@ -31,7 +32,7 @@ pub enum LintError {
     LintFailed(String),
 }
 
-impl fmt::Display for LintError {
+impl std::fmt::Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let error_msg = match self {
             LintError::UnexpectedLineType { line, linter_state } => {
@@ -81,7 +82,7 @@ impl LinterState {
     }
 }
 
-impl fmt::Display for LinterState {
+impl std::fmt::Display for LinterState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             LinterState::ExpectingStartEventSection => "ExpectingStartEventSection",
@@ -106,7 +107,7 @@ pub struct EventLinter {
     /// End date for newsletter
     end: Option<NaiveDate>,
     /// Region we are currently reading
-    current_region: Option<String>,
+    current_region: Option<Region>,
     /// An event's date and location in our current region. Used to make sure we have our events properly sorted, also
     /// stores the `EventOverview` until we reach the `EventLinks`
     overview: Option<EventOverview>,
@@ -115,7 +116,7 @@ pub struct EventLinter {
     /// Maximum error count before bailing
     error_limit: u16,
     /// Collected `EventListing`s by region, in case we want to use them outside the linter
-    events: HashMap<String, Vec<EventListing>>,
+    events: EventsByRegion,
 }
 
 impl EventLinter {
@@ -128,11 +129,11 @@ impl EventLinter {
             overview: None,
             error_count: 0,
             error_limit,
-            events: HashMap::new(),
+            events: EventsByRegion::new(),
         }
     }
 
-    pub fn events(&self) -> &HashMap<String, Vec<EventListing>> {
+    pub fn events(&self) -> &EventsByRegion {
         &self.events
     }
 
@@ -339,10 +340,9 @@ impl EventLinter {
                 )
                     .into();
 
-                self.events
-                    .entry(self.current_region.clone().expect("no region set"))
-                    .or_default()
-                    .push(listing);
+                // TODO: cleanup
+                let region = self.current_region.expect("no region set");
+                self.events.add(listing, region);
 
                 Ok(())
             }
