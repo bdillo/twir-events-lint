@@ -248,7 +248,7 @@ impl EventLinter {
             ParsedLine::Newline => Ok(()),
             ParsedLine::RegionHeader(region) => {
                 // TODO: check if region is already set
-                self.current_region = Some(region.clone());
+                self.current_region = Some(*region);
                 self.state = LinterState::ExpectingEventOverview;
                 Ok(())
             }
@@ -283,7 +283,7 @@ impl EventLinter {
                         let start_in_scope = self.date_in_scope(start)?;
                         let end_in_scope = self.date_in_scope(end)?;
 
-                        if !(start_in_scope && end_in_scope) {
+                        if !(start_in_scope || end_in_scope) {
                             return Err(LintError::EventOutOfDateRange {
                                 line: line.to_owned(),
                                 event_date: *overview.date(),
