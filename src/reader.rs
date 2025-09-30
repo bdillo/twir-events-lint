@@ -2,7 +2,6 @@ use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 
 use chrono::NaiveDate;
-use log::debug;
 use nom::{
     Parser,
     bytes::complete::{tag, take_until, take_while1},
