@@ -252,16 +252,20 @@ pub struct Event {
 
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: why did i comment this out
-        // write!(f, "[**{}**]({})", self.name, self.url)
-        write!(f, "[{}]({})", self.name, self.url)
+        // we strip the bold when we read the link, just put it back here for formatting
+        write!(f, "[**{}**]({})", self.name, self.url)
     }
 }
 
 impl From<MarkdownLink> for Event {
     fn from(value: MarkdownLink) -> Self {
+        let name = value
+            .label
+            .strip_prefix("**")
+            .and_then(|s| s.strip_suffix("**"))
+            .unwrap_or(&value.label);
         Self {
-            name: value.label,
+            name: name.to_owned(),
             url: value.url,
         }
     }
