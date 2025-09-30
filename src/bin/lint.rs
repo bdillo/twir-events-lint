@@ -1,7 +1,7 @@
 use clap::Parser;
 use log::{error, info};
 use std::fs;
-use twir_events_lint::{args::Args, linter::EventLinter, reader::Reader};
+use twir_events_lint::{args::Args, events::EventsByRegion, linter::EventLinter, reader::Reader};
 
 fn main() {
     let args = Args::parse();
@@ -24,18 +24,12 @@ fn main() {
         Err(e) => error!("{}", e),
     }
 
-    let new_events_file = match args.new_events_file() {
-        Some(path) => path,
-        None => std::process::exit(0),
+    if let Some(new_events_file) = args.new_events_file() {
+        info!("reading new events file '{}", new_events_file.display());
+        let new_events: EventsByRegion =
+            serde_json::from_str(&fs::read_to_string(new_events_file).unwrap()).unwrap();
+
+        let merged = linter.events().merge(&new_events);
+        println!("{merged}");
     };
-
-    // TODO: add merging stuff
-    println!("{new_events_file:?}");
-
-    for (region, events) in linter.events() {
-        println!("{region}");
-        for event in events {
-            print!("{event}");
-        }
-    }
 }

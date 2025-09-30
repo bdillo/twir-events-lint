@@ -138,9 +138,7 @@ class RawGqlEvent:
     self.date_time_str = node["dateTime"]
     self.event_url_str = node["eventUrl"]
 
-    venue = node["venues"]
-    print(venue)
-    venue = venue[0]
+    venue = node["venues"][0]
     self.venue_type = venue["venueType"]
     self.event_location = Location(venue["city"], venue["state"], venue["country"])
 

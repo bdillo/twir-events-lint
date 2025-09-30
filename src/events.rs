@@ -16,14 +16,16 @@ const OCEANIA: &str = "Oceania";
 const SOUTH_AMERICA: &str = "South America";
 
 /// Regional headers for events
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize)]
 pub enum Region {
     Virtual,
     Africa,
     Asia,
     Europe,
+    #[serde(rename = "North America")]
     NorthAmerica,
     Oceania,
+    #[serde(rename = "South America")]
     SouthAmerica,
 }
 
@@ -304,6 +306,18 @@ pub struct EventListing {
     events: Events,
 }
 
+impl Ord for EventListing {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.overview.cmp(&other.overview)
+    }
+}
+
+impl PartialOrd for EventListing {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl std::hash::Hash for EventListing {
     /// Hash the event - this should uniquely identify the event. We use this when reading in new events
     /// to determine if an event is the same or not. We do this because event dates, titles, etc. can change, and
@@ -349,7 +363,6 @@ impl<'de> Deserialize<'de> for EventListing {
     {
         use serde::de::Error;
 
-        // temporary struct that matches the JSON format
         #[derive(Deserialize)]
         struct JsonEvent {
             name: String,
@@ -492,13 +505,36 @@ impl<'a> IntoIterator for &'a EventsByRegion {
     }
 }
 
-// impl<'de> Deserialize<'de> for EventsByRegion {
-//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-//         // TODO: can we just derive this?
-//         let regions: HashMap<Region, Vec<EventListing>> = HashMap::deserialize(deserializer)?;
-//         Ok(regions.into())
-//     }
-// }
+impl<'de> Deserialize<'de> for EventsByRegion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // TODO: can we just derive this?
+        let regions: HashMap<Region, Vec<EventListing>> = HashMap::deserialize(deserializer)?;
+        Ok(regions.into())
+    }
+}
+
+impl std::fmt::Display for EventsByRegion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = String::new();
+
+        for region in Region::ALL {
+            if let Some(events) = self.0.get(&region) {
+                // TODO: cleanup
+                let mut events = events.clone();
+                events.sort();
+
+                s.push_str(&format!("### {region}\n"));
+
+                for event in events {
+                    s.push_str(&format!("{event}"));
+                }
+            }
+            s.push('\n');
+        }
+
+        write!(f, "{s}")
+    }
+}
