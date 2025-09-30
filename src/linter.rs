@@ -262,8 +262,6 @@ impl EventLinter {
     fn expecting_event_overview(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::EventOverview(overview) => {
-                // save our previous event so we can compare it when looking at the next event
-                self.overview = Some(overview.clone());
                 // validate event is within date range
                 match overview.date() {
                     // if it's just a single date, make sure its within the newsletter's range
