@@ -304,7 +304,7 @@ impl std::fmt::Display for Events {
 /// "* 2024-10-29 | Aarhus, DK | [Rust Aarhus](https://www.meetup.com/rust-aarhus/)"
 /// "   * [**Hack Night**](https://www.meetup.com/rust-aarhus/events/303479865)"
 /// An event can have multiple groups hosting it and multiple links to the same event
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct EventListing {
     overview: EventOverview,
     events: Events,
@@ -330,11 +330,44 @@ impl std::hash::Hash for EventListing {
         self.events
             .as_ref()
             .iter()
-            .map(|e| e.url.as_str())
+            .map(|e| {
+                // depending on event formatting, sometimes we get events with trailing /, sometimes we don't.
+                // because we are just trying to figure out which events are duplicate here, strip the / to standardize
+                // things a bit. doing it here means we don't have to mess with the actual event url formatting
+                let url = e.url.as_str();
+                url.strip_suffix('/').unwrap_or(url)
+            })
             .collect::<Vec<&str>>()
             .hash(state);
     }
 }
+
+impl PartialEq for EventListing {
+    /// needed for comparison when putting into our hash set, see Hash impl above
+    fn eq(&self, other: &Self) -> bool {
+        let self_urls: Vec<_> = self
+            .events
+            .iter()
+            .map(|e| {
+                let url = e.url.as_str();
+                url.strip_suffix('/').unwrap_or(url)
+            })
+            .collect();
+
+        let other_urls: Vec<_> = other
+            .events
+            .iter()
+            .map(|e| {
+                let url = e.url.as_str();
+                url.strip_suffix('/').unwrap_or(url)
+            })
+            .collect();
+
+        self_urls == other_urls
+    }
+}
+
+impl Eq for EventListing {}
 
 impl std::fmt::Display for EventListing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

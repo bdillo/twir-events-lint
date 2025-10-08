@@ -3,7 +3,7 @@ use std::{borrow::Cow, str::FromStr};
 
 use chrono::NaiveDate;
 use nom::{
-    Parser,
+    IResult, Parser,
     bytes::complete::{tag, take_until, take_while1},
     character::complete::char,
     combinator::opt,
@@ -283,13 +283,36 @@ fn parse_location(input: &str) -> Result<(&str, EventLocation), LineParseError> 
 
 /// Parse a markdown link, like "[Rust ATX](https://www.meetup.com/rust-atx/)"
 fn parse_md_link(input: &str) -> Result<(&str, MarkdownLink), LineParseError> {
-    let (input, label) = delimited(char('['), take_until("]"), char(']')).parse(input)?;
+    let (input, _) = char('[').parse(input)?;
+    let (input, label) = parse_balanced(input, '[', ']')?;
+    let (input, _) = char(']').parse(input)?;
 
-    // TODO: handle parens in urls properly, this will break currently
-    let (input, url) = delimited(char('('), take_until(")"), char(')')).parse(input)?;
+    let (input, _) = char('(').parse(input)?;
+    let (input, url) = parse_balanced(input, '(', ')')?;
+    let (input, _) = char(')').parse(input)?;
+
     let url = Url::parse(url)?;
-
     Ok((input, MarkdownLink::new(label.to_owned(), url)))
+}
+
+fn parse_balanced(input: &str, open: char, close: char) -> IResult<&str, &str> {
+    let mut depth = 0;
+
+    for (i, c) in input.char_indices() {
+        match c {
+            c if c == open => depth += 1,
+            c if c == close && depth > 0 => depth -= 1,
+            c if c == close && depth == 0 => {
+                return Ok((&input[i..], &input[..i]));
+            }
+            _ => {}
+        }
+    }
+
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::TakeUntil,
+    )))
 }
 
 /// An iterator over the newsletter, reads each line one by one and attempts to parse it into one of the parsed types we care about
