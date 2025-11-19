@@ -113,5 +113,6 @@
     "https://www.meetup.com/vancouver-rust": {"location_override": "hybrid"},
     "https://www.meetup.com/wellington-rust-meetup": {},
     "https://www.meetup.com/women-in-rust": {},
-    "https://www.meetup.com/zagreb-rust-meetup": {}
+    "https://www.meetup.com/zagreb-rust-meetup": {},
+    "https://www.meetup.com/rust-dortmund" : {}
 }
