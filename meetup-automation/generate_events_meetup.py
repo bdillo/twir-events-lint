@@ -9,10 +9,45 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+EVENT_LISTING_QUERY = """\
+query($first: Int = 20, $urlName: String!) {
+  groupByUrlname(urlname: $urlName) {
+    events(first: $first, sort: ASC) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          id
+          group {
+            name
+            city
+            state
+            country
+          }
+          title
+          dateTime
+          eventUrl
+          venues {
+            lat
+            lon
+            city
+            state
+            country
+            venueType
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 
 class TwirMeetupClient:
     AUTH_ENDPOINT = "https://secure.meetup.com/oauth2/access"
-    GQL_ENDPOINT = "https://api.meetup.com/gql"
+    GQL_ENDPOINT = "https://api.meetup.com/gql-ext"
 
     def __init__(self) -> None:
         self._access_token = None
@@ -52,57 +87,15 @@ class TwirMeetupClient:
         return self._access_token
 
     def _build_event_listing_gql_query(self, group_url_name: str) -> dict:
-        return {
-            "query": """
-            query ($urlName: String!, $searchEventInput: ConnectionInput!) {
-                groupByUrlname(urlname: $urlName) {
-                    upcomingEvents(input: $searchEventInput, sortOrder: ASC) {
-                        pageInfo {
-                            hasNextPage
-                            endCursor
-                        }
-                        edges {
-                            node {
-                                id
-                                group {
-                                    name
-                                    city
-                                    state
-                                    country
-                                }
-                                title
-                                dateTime
-                                eventUrl
-                                venue {
-                                    city
-                                    state
-                                    country
-                                    venueType
-                                    lat
-                                    lng
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            """,
-            "variables": {
-                "urlName": group_url_name,
-                "searchEventInput": {
-                    # TODO: see if we need this limit or not
-                    "first": 20
-                }
-            }
-        }
+        return {"query": EVENT_LISTING_QUERY, "variables": {"urlName": group_url_name}}
 
     def _parse_event_listing_gql_response(self, response: dict, location_override: Optional[LocationOverride]) -> List[RawGqlEvent]:
-        edges = response["groupByUrlname"]["upcomingEvents"]["edges"]
+        edges = response["groupByUrlname"]["events"]["edges"]
 
         events = []
         # TODO: maybe move this validation somewhere else?
         for edge_kwargs in edges:
-            if not edge_kwargs["node"]["venue"]:
+            if not edge_kwargs["node"]["venues"]:
                 # for events where there's no venue in the response and we have a virtual override, inherit the location from the group here
                 # a bit gross but oh well
                 if location_override == LocationOverride.VIRTUAL:
@@ -113,9 +106,9 @@ class TwirMeetupClient:
                     venue["country"] = edge_kwargs["node"]["group"]["country"]
                     venue["venueType"] = "online"
 
-                    edge_kwargs["node"]["venue"] = venue
+                    edge_kwargs["node"]["venues"] = [venue]
                 else:
-                    logger.error(f"Event response missing venue: {edge_kwargs}")
+                    logger.error(f"Event response missing venues: {edge_kwargs}")
                     continue
 
             events.append(RawGqlEvent(**edge_kwargs))
@@ -221,6 +214,7 @@ class TwirMeetupClient:
         logger.debug(f"Fetching events for group {group}")
         query = self._build_event_listing_gql_query(group.url_name)
         response = requests.post(url=self.GQL_ENDPOINT, headers=headers, json=query)
+        response.raise_for_status()
         data = response.json()["data"]
         logger.debug(data)
 
