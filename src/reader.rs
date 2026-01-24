@@ -1,6 +1,7 @@
 use core::fmt;
 use std::{borrow::Cow, str::FromStr};
 
+use anyhow::Context;
 use chrono::NaiveDate;
 use nom::{
     IResult, Parser,
@@ -14,6 +15,10 @@ use url::Url;
 use crate::events::{
     EventDate, EventGroup, EventLocation, EventOverview, Events, MarkdownLink, Region,
 };
+
+const EVENTS_HEADER: &str = "## Upcoming Events";
+const EVENTS_FOOTER: &str =
+    "If you are running a Rust event please add it to the [calendar] to get";
 
 /// High level error when reading lines from the newsletter
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,22 +329,10 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    pub fn new(contents: &'a str) -> Self {
-        // TODO: pull this string out into a const somewhere as we reference it more than once
-        let events_start = contents
-            .find("## Upcoming Events")
-            .expect("no events section header found");
-        let current_line_num = contents[..events_start].lines().count() as u64;
-        let contents = &contents[events_start..];
-
-        let events_end = contents
-            .find("If you are running a Rust event please add it to the [calendar] to get")
-            .expect("no events section end found");
-        let contents = &contents[..events_end];
-
+    pub fn new(contents: &'a str, start_line_num: u64) -> Self {
         Self {
             contents,
-            current_line_num,
+            current_line_num: start_line_num,
         }
     }
 }
@@ -377,6 +370,23 @@ impl<'a> Iterator for Reader<'a> {
             }),
         })
     }
+}
+
+/// Extracts the event section and line start number from a full TWIR document
+pub fn find_events_section(contents: &str) -> anyhow::Result<(&str, u64)> {
+    let start_offset = contents
+        .find(EVENTS_HEADER)
+        .with_context(|| format!("header '{EVENTS_HEADER}' not found"))?;
+
+    let line_num = contents[..start_offset].lines().count() as u64;
+    let contents = &contents[start_offset..];
+
+    let end_offset = contents
+        .find(EVENTS_FOOTER)
+        .with_context(|| format!("footer '{EVENTS_FOOTER}' not found"))?;
+    let contents = &contents[..end_offset];
+
+    Ok((contents, line_num))
 }
 
 #[cfg(test)]

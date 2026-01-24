@@ -1,9 +1,14 @@
 use clap::Parser;
 use log::{error, info};
 use std::fs;
-use twir_events_lint::{args::Args, events::EventsByRegion, linter::EventLinter, reader::Reader};
+use twir_events_lint::{
+    args::Args,
+    events::EventsByRegion,
+    linter::EventLinter,
+    reader::{Reader, find_events_section},
+};
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let log_level = if args.debug() {
@@ -15,8 +20,9 @@ fn main() {
     simple_logger::init_with_level(log_level).expect("failed to init logger");
 
     info!("reading file '{}'", args.draft().display());
-    let md_contents = fs::read_to_string(args.draft()).unwrap();
-    let reader = Reader::new(&md_contents);
+    let content = fs::read_to_string(args.draft()).unwrap();
+    let (events_section, line_num) = find_events_section(&content)?;
+    let reader = Reader::new(events_section, line_num);
 
     let mut linter = EventLinter::new(args.error_limit());
     match linter.lint(reader) {
@@ -32,4 +38,6 @@ fn main() {
         let merged = linter.events().merge(&new_events);
         println!("{merged}");
     };
+
+    Ok(())
 }

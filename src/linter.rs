@@ -354,6 +354,8 @@ impl EventLinter {
 
 #[cfg(test)]
 mod test {
+    use crate::reader::find_events_section;
+
     use super::*;
 
     fn build_event_section(body_to_add: Option<&str>) -> String {
@@ -380,7 +382,9 @@ mod test {
     #[test]
     fn test_valid_event_section() {
         let text = build_event_section(None);
-        let reader = Reader::new(&text);
+        let (event_section, line_num) =
+            find_events_section(&text).expect("failed to find events section");
+        let reader = Reader::new(event_section, line_num);
         let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
     }
