@@ -25,19 +25,22 @@ fn main() -> anyhow::Result<()> {
     let reader = Reader::new(events_section, line_num);
 
     let mut linter = EventLinter::new(args.error_limit());
-    match linter.lint(reader) {
-        Ok(_) => info!("lgtm!"),
-        Err(e) => error!("{}", e),
+    if let Err(e) = linter.lint(reader) {
+        error!("{}", e);
+        std::process::exit(1);
     }
+    info!("lgtm!");
 
     if let Some(new_events_file) = args.new_events_file() {
-        info!("reading new events file '{}", new_events_file.display());
-        let new_events: EventsByRegion =
-            serde_json::from_str(&fs::read_to_string(new_events_file).unwrap()).unwrap();
+        info!("reading new events file '{}'", new_events_file.display());
+        let content = fs::read_to_string(new_events_file)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", new_events_file.display(), e))?;
+        let new_events: EventsByRegion = serde_json::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("failed to parse {}: {}", new_events_file.display(), e))?;
 
         let merged = linter.events().merge(&new_events);
         println!("{merged}");
-    };
+    }
 
     Ok(())
 }

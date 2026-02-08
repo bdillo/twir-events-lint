@@ -217,15 +217,18 @@ impl EventLinter {
         }
     }
 
+    /// Returns the newsletter's date range, or an error if not set
+    fn date_range(&self) -> Result<(NaiveDate, NaiveDate), LintError> {
+        match (self.start, self.end) {
+            (Some(s), Some(e)) => Ok((s, e)),
+            _ => Err(LintError::DateRangeNotSet),
+        }
+    }
+
     /// Helper to see if a given date falls within the newsletter's range
     fn date_in_scope(&self, date: &NaiveDate) -> Result<bool, LintError> {
-        if let Some(start) = self.start
-            && let Some(end) = self.end
-        {
-            Ok(date >= &start && date <= &end)
-        } else {
-            Err(LintError::DateRangeNotSet)
-        }
+        let (start, end) = self.date_range()?;
+        Ok(date >= &start && date <= &end)
     }
 
     fn expecting_start_event_section(&mut self, line: &Line) -> Result<(), LintError> {
@@ -272,6 +275,8 @@ impl EventLinter {
     fn expecting_event_overview(&mut self, line: &Line) -> Result<(), LintError> {
         match line.parsed() {
             ParsedLine::EventOverview(overview) => {
+                let (range_start, range_end) = self.date_range()?;
+
                 // validate event is within date range
                 match overview.date() {
                     // if it's just a single date, make sure its within the newsletter's range
@@ -280,9 +285,8 @@ impl EventLinter {
                             return Err(LintError::EventOutOfDateRange {
                                 line: line.to_owned(),
                                 event_date: *overview.date(),
-                                // TODO: cleanup
-                                start: self.start.unwrap(),
-                                end: self.end.unwrap(),
+                                start: range_start,
+                                end: range_end,
                             });
                         }
                     }
@@ -295,9 +299,8 @@ impl EventLinter {
                             return Err(LintError::EventOutOfDateRange {
                                 line: line.to_owned(),
                                 event_date: *overview.date(),
-                                // TODO: cleanup
-                                start: self.start.unwrap(),
-                                end: self.end.unwrap(),
+                                start: range_start,
+                                end: range_end,
                             });
                         }
                     }
