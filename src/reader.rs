@@ -354,7 +354,7 @@ impl<'a> Iterator for Reader<'a> {
                 self.contents = &self.contents[offset + 1..];
                 line
             }
-            None => self.contents,
+            None => std::mem::take(&mut self.contents),
         };
 
         Some(match line.parse::<ParsedLine>() {
@@ -392,12 +392,188 @@ pub fn find_events_section(contents: &str) -> anyhow::Result<(&str, u64)> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::NaiveDate;
+
+    // parse_date tests
+    #[test]
+    fn parse_date_valid() {
+        let (remaining, date) = parse_date("2024-10-24 | rest").unwrap();
+        assert_eq!(date, NaiveDate::from_ymd_opt(2024, 10, 24).unwrap());
+        assert_eq!(remaining, " | rest");
+    }
 
     #[test]
-    fn test_newline() {
-        // `lines()` strips newlines for us, so an empty string == newline
-        let line = "";
-        let parsed = line.parse::<ParsedLine>().unwrap();
+    fn parse_date_invalid() {
+        let result = parse_date("not-a-date");
+        assert!(result.is_err());
+    }
+
+    // parse_event_date tests
+    #[test]
+    fn parse_event_date_single() {
+        let (remaining, date) = parse_event_date("2024-10-24 | rest").unwrap();
+        assert_eq!(date, EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap()));
+        assert_eq!(remaining, " | rest");
+    }
+
+    #[test]
+    fn parse_event_date_range() {
+        let (remaining, date) = parse_event_date("2024-10-24 - 2024-10-27 | rest").unwrap();
+        assert_eq!(
+            date,
+            EventDate::DateRange {
+                start: NaiveDate::from_ymd_opt(2024, 10, 24).unwrap(),
+                end: NaiveDate::from_ymd_opt(2024, 10, 27).unwrap(),
+            }
+        );
+        assert_eq!(remaining, " | rest");
+    }
+
+    // parse_location tests
+    #[test]
+    fn parse_location_virtual() {
+        let (remaining, loc) = parse_location("Virtual | rest").unwrap();
+        assert_eq!(loc, EventLocation::Virtual);
+        assert_eq!(remaining, " | rest");
+    }
+
+    #[test]
+    fn parse_location_virtual_with_location() {
+        let (remaining, loc) = parse_location("Virtual (Seattle, WA, US) | rest").unwrap();
+        assert_eq!(loc, EventLocation::VirtualWithLocation("Seattle, WA, US".to_string()));
+        assert_eq!(remaining, " | rest");
+    }
+
+    #[test]
+    fn parse_location_hybrid() {
+        let (remaining, loc) = parse_location("Hybrid (Berlin, DE) | rest").unwrap();
+        assert_eq!(loc, EventLocation::Hybrid("Berlin, DE".to_string()));
+        assert_eq!(remaining, " | rest");
+    }
+
+    #[test]
+    fn parse_location_in_person() {
+        let (remaining, loc) = parse_location("Austin, TX, US | rest").unwrap();
+        assert_eq!(loc, EventLocation::InPerson("Austin, TX, US".to_string()));
+        assert_eq!(remaining, " | rest");
+    }
+
+    // parse_md_link tests
+    #[test]
+    fn parse_md_link_simple() {
+        let (remaining, link) = parse_md_link("[Rust ATX](https://example.com/) more").unwrap();
+        assert_eq!(link.label(), "Rust ATX");
+        assert_eq!(remaining, " more");
+    }
+
+    #[test]
+    fn parse_md_link_nested_brackets() {
+        let (remaining, link) = parse_md_link("[Label [with] brackets](https://example.com/)").unwrap();
+        assert_eq!(link.label(), "Label [with] brackets");
+        assert_eq!(remaining, "");
+    }
+
+    #[test]
+    fn parse_md_link_nested_parens_in_url() {
+        let (remaining, link) = parse_md_link("[Label](https://example.com/path_(with_parens)/)").unwrap();
+        assert_eq!(link.label(), "Label");
+        assert_eq!(remaining, "");
+    }
+
+    // ParsedLine::from_str tests
+    #[test]
+    fn parsed_line_newline() {
+        let parsed = "".parse::<ParsedLine>().unwrap();
         assert_eq!(parsed, ParsedLine::Newline);
+    }
+
+    #[test]
+    fn parsed_line_start_event_section() {
+        let parsed = "## Upcoming Events".parse::<ParsedLine>().unwrap();
+        assert_eq!(parsed, ParsedLine::StartEventSection);
+    }
+
+    #[test]
+    fn parsed_line_events_date_range() {
+        let parsed = "Rusty Events between 2024-10-23 - 2024-11-20 🦀".parse::<ParsedLine>().unwrap();
+        match parsed {
+            ParsedLine::EventsDateRange { start, end } => {
+                assert_eq!(start, NaiveDate::from_ymd_opt(2024, 10, 23).unwrap());
+                assert_eq!(end, NaiveDate::from_ymd_opt(2024, 11, 20).unwrap());
+            }
+            _ => panic!("expected EventsDateRange"),
+        }
+    }
+
+    #[test]
+    fn parsed_line_region_header() {
+        let parsed = "### Virtual".parse::<ParsedLine>().unwrap();
+        assert_eq!(parsed, ParsedLine::RegionHeader(Region::Virtual));
+
+        let parsed = "### North America".parse::<ParsedLine>().unwrap();
+        assert_eq!(parsed, ParsedLine::RegionHeader(Region::NorthAmerica));
+    }
+
+    #[test]
+    fn parsed_line_event_overview() {
+        let line = "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
+        let parsed = line.parse::<ParsedLine>().unwrap();
+        match parsed {
+            ParsedLine::EventOverview(overview) => {
+                assert_eq!(*overview.date(), EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap()));
+                assert_eq!(*overview.location(), EventLocation::Virtual);
+                assert_eq!(overview.groups().len(), 1);
+            }
+            _ => panic!("expected EventOverview"),
+        }
+    }
+
+    #[test]
+    fn parsed_line_event_overview_multiple_groups() {
+        let line = "* 2024-11-07 | Virtual (Berlin, DE) | [OpenTechSchool Berlin](https://berline.rs/) + [Rust Berlin](https://www.meetup.com/rust-berlin/)";
+        let parsed = line.parse::<ParsedLine>().unwrap();
+        match parsed {
+            ParsedLine::EventOverview(overview) => {
+                assert_eq!(overview.groups().len(), 2);
+            }
+            _ => panic!("expected EventOverview"),
+        }
+    }
+
+    #[test]
+    fn parsed_line_event_links() {
+        let line = "    * [**Hackathon Showcase**](https://www.meetup.com/women-in-rust/events/123/)";
+        let parsed = line.parse::<ParsedLine>().unwrap();
+        match parsed {
+            ParsedLine::EventLinks(events) => {
+                assert_eq!(events.len(), 1);
+            }
+            _ => panic!("expected EventLinks"),
+        }
+    }
+
+    #[test]
+    fn parsed_line_event_links_not_bold_fails() {
+        let line = "    * [Not Bold](https://example.com/)";
+        let result = line.parse::<ParsedLine>();
+        assert!(result.is_err());
+    }
+
+    // Reader tests
+    #[test]
+    fn reader_iterates_lines() {
+        let content = "## Upcoming Events\n\nRusty Events between 2024-10-23 - 2024-11-20 🦀\n";
+        let mut reader = Reader::new(content, 0);
+
+        let line1 = reader.next().unwrap().unwrap();
+        assert_eq!(line1.parsed(), &ParsedLine::StartEventSection);
+
+        let line2 = reader.next().unwrap().unwrap();
+        assert_eq!(line2.parsed(), &ParsedLine::Newline);
+
+        let line3 = reader.next().unwrap().unwrap();
+        matches!(line3.parsed(), ParsedLine::EventsDateRange { .. });
+
+        assert!(reader.next().is_none());
     }
 }

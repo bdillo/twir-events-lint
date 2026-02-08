@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     simple_logger::init_with_level(log_level).expect("failed to init logger");
 
     info!("reading file '{}'", args.draft().display());
-    let content = fs::read_to_string(args.draft()).unwrap();
+    let content = fs::read_to_string(args.draft())?;
     let (events_section, line_num) = find_events_section(&content)?;
     let reader = Reader::new(events_section, line_num);
 

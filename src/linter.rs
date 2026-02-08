@@ -139,9 +139,19 @@ impl EventLinter {
 
     pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
         for line in reader {
-            // TODO: fix
-            let line = line.unwrap();
-            self.lint_line(&line)?;
+            match line {
+                Ok(line) => self.lint_line(&line)?,
+                Err(e) => {
+                    error!("{}", e);
+                    self.error_count += 1;
+                    if self.error_count >= self.error_limit {
+                        return Err(LintError::LintFailed(
+                            "reached maximum error limit".to_owned(),
+                        ));
+                    }
+                    // Parse errors don't change linter state - we skip the line
+                }
+            }
         }
 
         if self.state != LinterState::ExpectingRegionHeader {
@@ -331,15 +341,15 @@ impl EventLinter {
 
                 // we have the event overview and links now, so we can return a full `EventListing` in case we want to
                 // do something with it outside of the linter
-                // TODO: cleanup expect
-                let listing = (
-                    self.overview.clone().expect("no overview set"),
-                    events.to_owned(),
-                )
-                    .into();
+                let overview = self
+                    .overview
+                    .clone()
+                    .ok_or_else(|| LintError::LintFailed("no overview set".to_owned()))?;
+                let region = self
+                    .current_region
+                    .ok_or_else(|| LintError::LintFailed("no region set".to_owned()))?;
 
-                // TODO: cleanup
-                let region = self.current_region.expect("no region set");
+                let listing = (overview, events.to_owned()).into();
                 self.events.add(listing, region);
 
                 Ok(())
@@ -354,6 +364,9 @@ impl EventLinter {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+    use std::path::Path;
+
     use crate::reader::find_events_section;
 
     use super::*;
@@ -379,6 +392,35 @@ mod test {
         text
     }
 
+    fn lint_file(path: &Path) -> Result<(), LintError> {
+        let content = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+        let (section, line_num) = find_events_section(&content)
+            .unwrap_or_else(|e| panic!("failed to find events section in {}: {e}", path.display()));
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(20);
+        linter.lint(reader)
+    }
+
+    fn collect_fixtures(dir: &str) -> Vec<std::path::PathBuf> {
+        let path = Path::new(dir);
+        if !path.exists() {
+            return vec![];
+        }
+
+        fs::read_dir(path)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                if path.extension().is_some_and(|ext| ext == "md") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn test_valid_event_section() {
         let text = build_event_section(None);
@@ -387,5 +429,49 @@ mod test {
         let reader = Reader::new(event_section, line_num);
         let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
+    }
+
+    #[test]
+    fn valid_fixtures_pass() {
+        let _ = simple_logger::init_with_level(log::Level::Error);
+
+        let fixtures = collect_fixtures("test/valid");
+        assert!(!fixtures.is_empty(), "no valid fixtures found");
+
+        for path in fixtures {
+            let path_clone = path.clone();
+            let result = std::panic::catch_unwind(|| lint_file(&path_clone));
+
+            match result {
+                Ok(Ok(())) => {} // passed
+                Ok(Err(e)) => panic!("{}: lint error: {}", path.display(), e),
+                Err(e) => panic!("{}: panicked: {:?}", path.display(), e),
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_fixtures_fail() {
+        let fixtures = collect_fixtures("test/invalid");
+        assert!(!fixtures.is_empty(), "no invalid fixtures found");
+
+        for path in fixtures {
+            // Use catch_unwind because the linter may panic on some errors
+            // (error recovery isn't perfect). Both panics and Err are "failures".
+            let path_clone = path.clone();
+            let result = std::panic::catch_unwind(|| lint_file(&path_clone));
+
+            let failed = match result {
+                Ok(Ok(())) => false,  // lint passed - not what we want
+                Ok(Err(_)) => true,   // lint returned error - good
+                Err(_) => true,       // lint panicked - also counts as failure
+            };
+
+            assert!(
+                failed,
+                "expected {} to fail, but it passed",
+                path.display()
+            );
+        }
     }
 }
