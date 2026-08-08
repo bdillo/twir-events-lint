@@ -2,10 +2,7 @@ use clap::Parser;
 use log::{error, info};
 use std::fs;
 use twir_events_lint::{
-    args::Args,
-    events::EventsByRegion,
-    linter::EventLinter,
-    reader::{Reader, find_events_section},
+    args::Args, events::EventsByRegion, linter::EventLinter, reader::EventsSection,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -21,11 +18,10 @@ fn main() -> anyhow::Result<()> {
 
     info!("reading file '{}'", args.draft().display());
     let content = fs::read_to_string(args.draft())?;
-    let (events_section, line_num) = find_events_section(&content)?;
-    let reader = Reader::new(events_section, line_num);
+    let events_section = EventsSection::find(&content)?;
 
     let mut linter = EventLinter::new(args.error_limit());
-    if let Err(e) = linter.lint(reader) {
+    if let Err(e) = linter.lint(events_section.reader()) {
         error!("{}", e);
         std::process::exit(1);
     }

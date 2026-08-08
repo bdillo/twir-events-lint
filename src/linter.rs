@@ -114,8 +114,6 @@ impl std::error::Error for LintError {}
 /// Overall state of the linter, keeps track of what section we are in
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LinterState {
-    /// Expecting the start of the event section
-    ExpectingStartEventSection,
     /// Expecting the date range for the newletter's events
     ExpectingEventsDateRange,
     /// Expecting a regional event section (e.g. Virtual, Asia, Europe, etc)
@@ -128,14 +126,13 @@ pub enum LinterState {
 
 impl LinterState {
     fn new() -> Self {
-        Self::ExpectingStartEventSection
+        Self::ExpectingEventsDateRange
     }
 }
 
 impl std::fmt::Display for LinterState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            LinterState::ExpectingStartEventSection => "ExpectingStartEventSection",
             LinterState::ExpectingEventsDateRange => "ExpectingEventsDateRange",
             LinterState::ExpectingRegionHeader => "ExpectingRegion",
             LinterState::ExpectingEventOverview => "ExpectingEventOverview",
@@ -231,7 +228,6 @@ impl EventLinter {
         );
 
         let lint_result = match &self.state {
-            LinterState::ExpectingStartEventSection => self.expecting_start_event_section(line),
             LinterState::ExpectingEventsDateRange => self.expecting_events_date_range(line),
             LinterState::ExpectingRegionHeader => self.expecting_region(line),
             LinterState::ExpectingEventOverview => self.expecting_event_overview(line),
@@ -260,7 +256,7 @@ impl EventLinter {
 
     fn recover_from_unexpected_line(&mut self, line: &Line) -> Result<(), LintError> {
         match self.state {
-            LinterState::ExpectingStartEventSection | LinterState::ExpectingEventsDateRange => {
+            LinterState::ExpectingEventsDateRange => {
                 Err(LintError::RecoveryFailed { state: self.state })
             }
             LinterState::ExpectingRegionHeader => Ok(()),
@@ -287,7 +283,7 @@ impl EventLinter {
                         self.state = LinterState::ExpectingEventOverview;
                         Ok(())
                     }
-                    ParsedLine::StartEventSection | ParsedLine::EventsDateRange { .. } => Ok(()),
+                    ParsedLine::EventsDateRange { .. } => Ok(()),
                 }
             }
         }
@@ -326,14 +322,6 @@ impl EventLinter {
     fn date_in_scope(&self, date: &NaiveDate) -> Result<bool, LintError> {
         let (start, end) = self.date_range()?;
         Ok(date >= &start && date <= &end)
-    }
-
-    fn expecting_start_event_section(&mut self, line: &Line) -> Result<(), LintError> {
-        // TODO: cleanup
-        if line.parsed() == &ParsedLine::StartEventSection {
-            self.state = LinterState::ExpectingEventsDateRange
-        }
-        Ok(())
     }
 
     fn expecting_events_date_range(&mut self, line: &Line) -> Result<(), LintError> {
@@ -473,7 +461,7 @@ mod test {
     use std::fs;
     use std::path::Path;
 
-    use crate::reader::find_events_section;
+    use crate::reader::EventsSection;
 
     use super::*;
 
@@ -501,9 +489,9 @@ mod test {
     fn lint_file(path: &Path) -> Result<(), LintError> {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let (section, line_num) = find_events_section(&content)
+        let section = EventsSection::find(&content)
             .unwrap_or_else(|e| panic!("failed to find events section in {}: {e}", path.display()));
-        let reader = Reader::new(section, line_num);
+        let reader = section.reader();
         let mut linter = EventLinter::new(20);
         linter.lint(reader)
     }
@@ -517,8 +505,8 @@ mod test {
     }
 
     fn lint_document(content: &str) -> (Result<(), LintError>, EventLinter) {
-        let (section, line_num) = find_events_section(content).unwrap();
-        let reader = Reader::new(section, line_num);
+        let section = EventsSection::find(content).unwrap();
+        let reader = section.reader();
         let mut linter = EventLinter::new(20);
         let result = linter.lint(reader);
         (result, linter)
@@ -546,9 +534,8 @@ mod test {
     #[test]
     fn test_valid_event_section() {
         let text = build_event_section(None);
-        let (event_section, line_num) =
-            find_events_section(&text).expect("failed to find events section");
-        let reader = Reader::new(event_section, line_num);
+        let section = EventsSection::find(&text).expect("failed to find events section");
+        let reader = section.reader();
         let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
 
@@ -579,7 +566,7 @@ mod test {
 
     #[test]
     fn incomplete_document_reports_its_final_state() {
-        let reader = Reader::new("## Upcoming Events\n", 0);
+        let reader = Reader::new("", 1);
         let mut linter = EventLinter::new(20);
 
         assert_eq!(
@@ -600,12 +587,11 @@ mod test {
         );
 
         let text = build_event_section(Some(extra));
-        let (section, line_num) = find_events_section(&text).unwrap();
-        let reader = Reader::new(section, line_num);
+        let section = EventsSection::find(&text).unwrap();
         let mut linter = EventLinter::new(1);
 
         assert_eq!(
-            linter.lint(reader),
+            linter.lint(section.reader()),
             Err(LintError::ErrorLimitReached { limit: 1 })
         );
         assert_eq!(linter.error_count, 1);
@@ -626,11 +612,7 @@ mod test {
             "\n",
         );
 
-        let text = build_event_section(Some(extra));
-        let (section, line_num) = find_events_section(&text).unwrap();
-        let reader = Reader::new(section, line_num);
-        let mut linter = EventLinter::new(20);
-        let result = linter.lint(reader);
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
 
         assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
@@ -650,11 +632,7 @@ mod test {
             "\n",
         );
 
-        let text = build_event_section(Some(extra));
-        let (section, line_num) = find_events_section(&text).unwrap();
-        let reader = Reader::new(section, line_num);
-        let mut linter = EventLinter::new(20);
-        let result = linter.lint(reader);
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
 
         assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
@@ -678,11 +656,7 @@ mod test {
             "\n",
         );
 
-        let text = build_event_section(Some(extra));
-        let (section, line_num) = find_events_section(&text).unwrap();
-        let reader = Reader::new(section, line_num);
-        let mut linter = EventLinter::new(20);
-        let result = linter.lint(reader);
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
 
         assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(

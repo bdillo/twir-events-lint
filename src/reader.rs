@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, ops::Range, str::FromStr};
 
 use anyhow::Context;
 use chrono::NaiveDate;
@@ -130,8 +130,6 @@ impl std::error::Error for LineParseError {}
 pub enum ParsedLine {
     /// A newline
     Newline,
-    /// Start of the events section, "## Upcoming Events"
-    StartEventSection,
     /// The date range in the events section, "Rusty Events between..."
     EventsDateRange { start: NaiveDate, end: NaiveDate },
     /// Header of a section, we use these for the regions, like "### Virtual", "### Asia"...
@@ -149,10 +147,6 @@ impl FromStr for ParsedLine {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() {
             return Ok(Self::Newline);
-        }
-
-        if s == "## Upcoming Events" {
-            return Ok(Self::StartEventSection);
         }
 
         if let (s, Some(_)) = opt(tag("Rusty Events between ")).parse(s)? {
@@ -230,7 +224,6 @@ impl fmt::Display for ParsedLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             ParsedLine::Newline => "Newline",
-            ParsedLine::StartEventSection => "StartEventsSection",
             ParsedLine::EventsDateRange { start, end } => {
                 &format!("EventsDateRange ({start} - {end})")
             }
@@ -372,21 +365,37 @@ impl<'a> Iterator for Reader<'a> {
     }
 }
 
-/// Extracts the event section and line start number from a full TWIR document
-pub fn find_events_section(contents: &str) -> anyhow::Result<(&str, u64)> {
-    let start_offset = contents
-        .find(EVENTS_HEADER)
-        .with_context(|| format!("header '{EVENTS_HEADER}' not found"))?;
+/// The upcoming-events section within a full TWIR document.
+#[derive(Debug)]
+pub struct EventsSection<'a> {
+    document: &'a str,
+    body_range: Range<usize>,
+    start_line: u64,
+}
 
-    let line_num = contents[..start_offset].lines().count() as u64;
-    let contents = &contents[start_offset..];
+impl<'a> EventsSection<'a> {
+    pub fn find(document: &'a str) -> anyhow::Result<Self> {
+        let header_start = document
+            .find(EVENTS_HEADER)
+            .with_context(|| format!("header '{EVENTS_HEADER}' not found"))?;
+        let header_end = header_start + EVENTS_HEADER.len();
+        let body_start = header_end + usize::from(document[header_end..].starts_with('\n'));
 
-    let end_offset = contents
-        .find(EVENTS_FOOTER)
-        .with_context(|| format!("footer '{EVENTS_FOOTER}' not found"))?;
-    let contents = &contents[..end_offset];
+        let footer_offset = document[body_start..]
+            .find(EVENTS_FOOTER)
+            .with_context(|| format!("footer '{EVENTS_FOOTER}' not found"))?;
+        let body_end = body_start + footer_offset;
 
-    Ok((contents, line_num))
+        Ok(Self {
+            document,
+            body_range: body_start..body_end,
+            start_line: document[..header_start].lines().count() as u64 + 1,
+        })
+    }
+
+    pub fn reader(&self) -> Reader<'a> {
+        Reader::new(&self.document[self.body_range.clone()], self.start_line)
+    }
 }
 
 #[cfg(test)]
@@ -496,12 +505,6 @@ mod test {
     }
 
     #[test]
-    fn parsed_line_start_event_section() {
-        let parsed = "## Upcoming Events".parse::<ParsedLine>().unwrap();
-        assert_eq!(parsed, ParsedLine::StartEventSection);
-    }
-
-    #[test]
     fn parsed_line_events_date_range() {
         let parsed = "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
             .parse::<ParsedLine>()
@@ -576,19 +579,35 @@ mod test {
 
     // Reader tests
     #[test]
-    fn reader_iterates_lines() {
-        let content = "## Upcoming Events\n\nRusty Events between 2024-10-23 - 2024-11-20 🦀\n";
-        let mut reader = Reader::new(content, 0);
+    fn events_section_creates_reader_with_document_line_numbers() {
+        let document = concat!(
+            "Title: Test\n",
+            "## Upcoming Events\n",
+            "\n",
+            "Rusty Events between 2024-10-23 - 2024-11-20 🦀\n",
+            "If you are running a Rust event please add it to the [calendar] to get\n",
+        );
+        let section = EventsSection::find(document).unwrap();
+        let mut reader = section.reader();
 
-        let line1 = reader.next().unwrap().unwrap();
-        assert_eq!(line1.parsed(), &ParsedLine::StartEventSection);
+        let blank_line = reader.next().unwrap().unwrap();
+        assert_eq!(blank_line.num(), 3);
+        assert_eq!(blank_line.parsed(), &ParsedLine::Newline);
 
-        let line2 = reader.next().unwrap().unwrap();
-        assert_eq!(line2.parsed(), &ParsedLine::Newline);
-
-        let line3 = reader.next().unwrap().unwrap();
-        matches!(line3.parsed(), ParsedLine::EventsDateRange { .. });
+        let date_range = reader.next().unwrap().unwrap();
+        assert_eq!(date_range.num(), 4);
+        assert!(matches!(
+            date_range.parsed(),
+            ParsedLine::EventsDateRange { .. }
+        ));
 
         assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn events_section_requires_footer() {
+        let document = "## Upcoming Events\n";
+        let error = EventsSection::find(document).unwrap_err();
+        assert!(error.to_string().contains(EVENTS_FOOTER));
     }
 }
