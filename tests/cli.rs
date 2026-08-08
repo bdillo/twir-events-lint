@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -43,6 +47,33 @@ fn invalid_draft_reports_the_lint_error() {
         "stderr: {stderr}"
     );
     assert!(stderr.contains("line #8"), "stderr: {stderr}");
+}
+
+#[test]
+fn fix_removes_out_of_range_event_and_empty_region() {
+    let source = fixture("fixable.md");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let draft = std::env::temp_dir().join(format!(
+        "twir-events-lint-{}-{unique}.md",
+        std::process::id()
+    ));
+    std::fs::copy(&source, &draft).expect("failed to create temporary draft");
+
+    let output = run(&["--draft", draft.to_str().unwrap(), "--fix"]);
+    let fixed = std::fs::read_to_string(&draft).expect("failed to read fixed draft");
+    std::fs::remove_file(&draft).expect("failed to remove temporary draft");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        output_text(&output.stderr)
+    );
+    assert!(!fixed.contains("Old Event"));
+    assert!(!fixed.contains("### Europe"));
+    assert!(fixed.contains("Test Event"));
 }
 
 #[test]

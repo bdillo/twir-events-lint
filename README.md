@@ -1,14 +1,26 @@
 # Lint
 
-Use the linter for the TWIR draft like so:
-```
-cargo run --bin lint -- -f ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md
+Lint a TWIR draft:
+
+```sh
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md
 ```
 
+Remove events that do not overlap the newsletter's event date range:
+
+```sh
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md --fix
+```
+
+Fixes are prepared in memory and then atomically written back to the draft. If every event in a region is removed, the empty region is removed as well.
+
 # Merge
-Merge events (output from meetup automation) and the current draft events with the merger:
+
+Merge events from the Meetup automation with the current draft events:
+
+```sh
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
+  --new-events-file ~/scratch/14may
 ```
-cargo run --bin merge -- -f ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md -n ~/scratch/14may
-```
-The second file here (`-n` arg) is the output of the meetup automation python script. The output of this is the new event section
-which can be copy pasted into the draft.
+
+The command prints the merged event section, which can be copied into the draft.

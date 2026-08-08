@@ -12,8 +12,9 @@ use nom::{
 };
 use url::Url;
 
-use crate::events::{
-    EventDate, EventGroup, EventLocation, EventOverview, Events, MarkdownLink, Region,
+use crate::{
+    edit::SourceSpan,
+    events::{EventDate, EventGroup, EventLocation, EventOverview, Events, MarkdownLink, Region},
 };
 
 const EVENTS_HEADER: &str = "## Upcoming Events";
@@ -51,6 +52,7 @@ pub struct Line<'a> {
     line_num: u64,
     line_parsed: ParsedLine,
     line_raw: Cow<'a, str>,
+    span: SourceSpan,
 }
 
 impl<'a> Line<'a> {
@@ -59,6 +61,7 @@ impl<'a> Line<'a> {
             line_num: self.line_num,
             line_parsed: self.line_parsed.clone(),
             line_raw: Cow::Owned(self.line_raw.clone().into_owned()),
+            span: self.span.clone(),
         }
     }
 
@@ -72,6 +75,11 @@ impl<'a> Line<'a> {
 
     pub fn raw(&self) -> &Cow<'a, str> {
         &self.line_raw
+    }
+
+    /// The line's absolute byte range, including its trailing newline when present.
+    pub fn span(&self) -> &SourceSpan {
+        &self.span
     }
 }
 
@@ -368,13 +376,19 @@ fn parse_balanced(input: &str, open: char, close: char) -> IResult<&str, &str> {
 pub struct Reader<'a> {
     contents: &'a str,
     current_line_num: u64,
+    current_offset: usize,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(contents: &'a str, start_line_num: u64) -> Self {
+        Self::with_offset(contents, start_line_num, 0)
+    }
+
+    fn with_offset(contents: &'a str, start_line_num: u64, start_offset: usize) -> Self {
         Self {
             contents,
             current_line_num: start_line_num,
+            current_offset: start_offset,
         }
     }
 }
@@ -389,21 +403,26 @@ impl<'a> Iterator for Reader<'a> {
 
         self.current_line_num += 1;
 
-        let line = match self.contents.find('\n') {
+        let (line, bytes_consumed) = match self.contents.find('\n') {
             Some(offset) => {
                 let line = &self.contents[..offset];
-                // leave out our newline
                 self.contents = &self.contents[offset + 1..];
-                line
+                (line, offset + 1)
             }
-            None => std::mem::take(&mut self.contents),
+            None => {
+                let line = std::mem::take(&mut self.contents);
+                (line, line.len())
+            }
         };
+        let span = SourceSpan::new(self.current_offset, self.current_offset + bytes_consumed);
+        self.current_offset += bytes_consumed;
 
         Some(match line.parse::<ParsedLine>() {
             Ok(line_type) => Ok(Line {
                 line_num: self.current_line_num,
                 line_parsed: line_type,
                 line_raw: Cow::Borrowed(line),
+                span,
             }),
             Err(e) => Err(LineError {
                 error: e,
@@ -443,7 +462,11 @@ impl<'a> EventsSection<'a> {
     }
 
     pub fn reader(&self) -> Reader<'a> {
-        Reader::new(&self.document[self.body_range.clone()], self.start_line)
+        Reader::with_offset(
+            &self.document[self.body_range.clone()],
+            self.start_line,
+            self.body_range.start,
+        )
     }
 }
 
@@ -680,6 +703,10 @@ mod test {
         let blank_line = reader.next().unwrap().unwrap();
         assert_eq!(blank_line.num(), 3);
         assert_eq!(blank_line.parsed(), &ParsedLine::Newline);
+        assert_eq!(
+            &document[blank_line.span().start()..blank_line.span().end()],
+            "\n"
+        );
 
         let date_range = reader.next().unwrap().unwrap();
         assert_eq!(date_range.num(), 4);

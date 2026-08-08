@@ -4,6 +4,7 @@ use chrono::NaiveDate;
 use log::{debug, error};
 
 use crate::{
+    edit::{SourceSpan, TextEdit},
     events::{EventDate, EventOverview, EventsByRegion, Region},
     reader::{Line, ParsedLine, Reader},
 };
@@ -16,21 +17,21 @@ pub enum LintError {
     // TODO: re-add expected types here somehow
     DateRangeNotSet,
     UnexpectedLineType {
-        line: Line<'static>,
+        line: Box<Line<'static>>,
         linter_state: LinterState,
     },
     EventOutOfDateRange {
-        line: Line<'static>,
+        line: Box<Line<'static>>,
         event_date: EventDate,
         start: NaiveDate,
         end: NaiveDate,
     },
     EventOutOfOrder {
-        line: Line<'static>,
+        line: Box<Line<'static>>,
     },
     EmptyRegion {
         region: Region,
-        line: Line<'static>,
+        line: Box<Line<'static>>,
     },
     DuplicateEvent {
         name: String,
@@ -142,6 +143,13 @@ impl std::fmt::Display for LinterState {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PendingEvent {
+    overview: EventOverview,
+    overview_span: SourceSpan,
+    remove: bool,
+}
+
 /// The state machine for linting the events section
 // TODO: keep track of newlines here, like in a counter? So we can lint for unexpected newlines between sections
 // TODO: move the reader back into the linter i think
@@ -158,9 +166,16 @@ pub struct EventLinter {
     /// Previous event overview, used to validate ordering within the current region
     previous_overview: Option<EventOverview>,
     /// Current event overview waiting to be paired with its event links
-    pending_overview: Option<EventOverview>,
+    pending_event: Option<PendingEvent>,
     /// Whether the current region contains at least one complete event listing
     region_has_events: bool,
+    /// Start of the current region header in the source document.
+    region_start: Option<usize>,
+    /// Number of complete events and removable events in the current region.
+    region_event_count: usize,
+    region_removal_count: usize,
+    /// Safe-edit index at which the current region began.
+    region_edit_start: usize,
     /// Current error count
     error_count: u16,
     /// Maximum error count before bailing
@@ -169,6 +184,8 @@ pub struct EventLinter {
     events: EventsByRegion,
     /// Event (name, URL) pairs seen in the current region, for duplicate detection
     seen_events: HashSet<(String, String)>,
+    /// Safe source edits suggested by validation.
+    safe_edits: Vec<TextEdit>,
 }
 
 impl EventLinter {
@@ -179,17 +196,26 @@ impl EventLinter {
             end: None,
             current_region: None,
             previous_overview: None,
-            pending_overview: None,
+            pending_event: None,
             region_has_events: false,
+            region_start: None,
+            region_event_count: 0,
+            region_removal_count: 0,
+            region_edit_start: 0,
             error_count: 0,
             error_limit,
             events: EventsByRegion::new(),
             seen_events: HashSet::new(),
+            safe_edits: Vec::new(),
         }
     }
 
     pub fn events(&self) -> &EventsByRegion {
         &self.events
+    }
+
+    pub fn safe_edits(&self) -> &[TextEdit] {
+        &self.safe_edits
     }
 
     pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
@@ -249,7 +275,7 @@ impl EventLinter {
 
     fn recover_after_parse_error(&mut self) {
         if self.state == LinterState::ExpectingEventLinks {
-            self.pending_overview = None;
+            self.pending_event = None;
             self.state = LinterState::ExpectingEventOverview;
         }
     }
@@ -264,7 +290,7 @@ impl EventLinter {
                 match line.parsed() {
                     ParsedLine::RegionHeader(region) => {
                         self.reset_region();
-                        self.current_region = Some(*region);
+                        self.start_region(*region, line);
                         self.state = LinterState::ExpectingEventOverview;
                         Ok(())
                     }
@@ -274,12 +300,12 @@ impl EventLinter {
                         Ok(())
                     }
                     ParsedLine::EventOverview(_) => {
-                        self.pending_overview = None;
+                        self.pending_event = None;
                         self.state = LinterState::ExpectingEventOverview;
                         self.expecting_event_overview(line)
                     }
                     ParsedLine::EventLinks(_) => {
-                        self.pending_overview = None;
+                        self.pending_event = None;
                         self.state = LinterState::ExpectingEventOverview;
                         Ok(())
                     }
@@ -289,11 +315,31 @@ impl EventLinter {
         }
     }
 
+    fn start_region(&mut self, region: Region, line: &Line) {
+        self.current_region = Some(region);
+        self.region_start = Some(line.span().start());
+        self.region_edit_start = self.safe_edits.len();
+    }
+
+    fn finish_region(&mut self, end: usize) {
+        if self.region_event_count > 0 && self.region_event_count == self.region_removal_count {
+            self.safe_edits.truncate(self.region_edit_start);
+            if let Some(start) = self.region_start {
+                self.safe_edits
+                    .push(TextEdit::delete(SourceSpan::new(start, end)));
+            }
+        }
+    }
+
     fn reset_region(&mut self) {
         self.previous_overview = None;
-        self.pending_overview = None;
+        self.pending_event = None;
         self.region_has_events = false;
         self.current_region = None;
+        self.region_start = None;
+        self.region_event_count = 0;
+        self.region_removal_count = 0;
+        self.region_edit_start = self.safe_edits.len();
         self.seen_events.clear();
     }
 
@@ -318,10 +364,14 @@ impl EventLinter {
         }
     }
 
-    /// Helper to see if a given date falls within the newsletter's range
-    fn date_in_scope(&self, date: &NaiveDate) -> Result<bool, LintError> {
-        let (start, end) = self.date_range()?;
-        Ok(date >= &start && date <= &end)
+    fn event_in_scope(&self, event_date: &EventDate) -> Result<bool, LintError> {
+        let (newsletter_start, newsletter_end) = self.date_range()?;
+        Ok(match event_date {
+            EventDate::Date(date) => date >= &newsletter_start && date <= &newsletter_end,
+            EventDate::DateRange { start, end } => {
+                start <= &newsletter_end && end >= &newsletter_start
+            }
+        })
     }
 
     fn expecting_events_date_range(&mut self, line: &Line) -> Result<(), LintError> {
@@ -334,7 +384,7 @@ impl EventLinter {
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: Box::new(line.to_owned()),
                 linter_state: self.state,
             }),
         }
@@ -346,12 +396,12 @@ impl EventLinter {
             ParsedLine::Newline => Ok(()),
             ParsedLine::RegionHeader(region) => {
                 // TODO: check if region is already set
-                self.current_region = Some(*region);
+                self.start_region(*region, line);
                 self.state = LinterState::ExpectingEventOverview;
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.clone().to_owned(),
+                line: Box::new(line.to_owned()),
                 linter_state: self.state,
             }),
         }
@@ -363,16 +413,11 @@ impl EventLinter {
                 let (range_start, range_end) = self.date_range()?;
 
                 // validate event is within date range
-                let out_of_range = match overview.date() {
-                    EventDate::Date(event_date) => !self.date_in_scope(event_date)?,
-                    EventDate::DateRange { start, end } => {
-                        !self.date_in_scope(start)? && !self.date_in_scope(end)?
-                    }
-                };
+                let out_of_range = !self.event_in_scope(overview.date())?;
 
                 if out_of_range {
                     self.record_error(LintError::EventOutOfDateRange {
-                        line: line.to_owned(),
+                        line: Box::new(line.to_owned()),
                         event_date: *overview.date(),
                         start: range_start,
                         end: range_end,
@@ -384,12 +429,16 @@ impl EventLinter {
                     && overview < prev_overview
                 {
                     self.record_error(LintError::EventOutOfOrder {
-                        line: line.to_owned(),
+                        line: Box::new(line.to_owned()),
                     })?;
                 }
 
                 // always transition — the line parsed fine even if validation failed
-                self.pending_overview = Some(overview.clone());
+                self.pending_event = Some(PendingEvent {
+                    overview: overview.clone(),
+                    overview_span: line.span().clone(),
+                    remove: out_of_range,
+                });
                 self.state = LinterState::ExpectingEventLinks;
 
                 Ok(())
@@ -401,15 +450,16 @@ impl EventLinter {
                 {
                     self.record_error(LintError::EmptyRegion {
                         region,
-                        line: line.to_owned(),
+                        line: Box::new(line.to_owned()),
                     })?;
                 }
                 self.state = LinterState::ExpectingRegionHeader;
+                self.finish_region(line.span().end());
                 self.reset_region();
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: Box::new(line.to_owned()),
                 linter_state: self.state,
             }),
         }
@@ -433,23 +483,32 @@ impl EventLinter {
 
                 // we have the event overview and links now, so we can return a full `EventListing` in case we want to
                 // do something with it outside of the linter
-                let overview = self
-                    .pending_overview
+                let pending = self
+                    .pending_event
                     .take()
-                    .ok_or(LintError::InternalInvariant("no pending overview set"))?;
+                    .ok_or(LintError::InternalInvariant("no pending event set"))?;
                 let region = self
                     .current_region
                     .ok_or(LintError::InternalInvariant("no current region set"))?;
 
-                self.previous_overview = Some(overview.clone());
-                let listing = (overview, events.to_owned()).into();
+                self.region_event_count += 1;
+                if pending.remove {
+                    self.region_removal_count += 1;
+                    self.safe_edits.push(TextEdit::delete(SourceSpan::new(
+                        pending.overview_span.start(),
+                        line.span().end(),
+                    )));
+                }
+
+                self.previous_overview = Some(pending.overview.clone());
+                let listing = (pending.overview, events.to_owned()).into();
                 self.events.add(listing, region);
                 self.region_has_events = true;
 
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
-                line: line.to_owned(),
+                line: Box::new(line.to_owned()),
                 linter_state: self.state,
             }),
         }
@@ -461,7 +520,7 @@ mod test {
     use std::fs;
     use std::path::Path;
 
-    use crate::reader::EventsSection;
+    use crate::{edit::apply_edits, reader::EventsSection};
 
     use super::*;
 
@@ -541,7 +600,7 @@ mod test {
 
         assert_eq!(event_count(&linter), 1);
         assert_eq!(linter.previous_overview, None);
-        assert_eq!(linter.pending_overview, None);
+        assert_eq!(linter.pending_event, None);
         assert!(!linter.region_has_events);
     }
 
@@ -558,7 +617,7 @@ mod test {
 
         assert_eq!(
             linter.lint_line(&line),
-            Err(LintError::InternalInvariant("no pending overview set"))
+            Err(LintError::InternalInvariant("no pending event set"))
         );
         assert!(!linter.region_has_events);
         assert!(linter.events().into_iter().next().is_none());
@@ -612,13 +671,51 @@ mod test {
             "\n",
         );
 
-        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+        let document = build_event_section(Some(extra));
+        let (result, linter) = lint_document(&document);
 
         assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
         );
+        assert_eq!(linter.safe_edits().len(), 1);
+
+        let fixed = apply_edits(&document, linter.safe_edits()).unwrap();
+        assert!(!fixed.contains("Out of Range Event"));
+        assert!(!fixed.contains("* 2024-09-01 | Berlin"));
+        assert!(fixed.contains("Valid Event"));
+    }
+
+    #[test]
+    fn removing_every_event_also_removes_the_region() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-09-01 | Berlin, DE | [Rust Berlin](https://example.com/)\n",
+            "    * [**Past Event**](https://example.com/events/past/)\n",
+            "\n",
+        );
+        let document = build_event_section(Some(extra));
+        let (_, linter) = lint_document(&document);
+
+        let fixed = apply_edits(&document, linter.safe_edits()).unwrap();
+        assert!(!fixed.contains("### Europe"));
+        assert!(!fixed.contains("Past Event"));
+    }
+
+    #[test]
+    fn event_range_overlapping_newsletter_is_in_scope() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-01 - 2024-12-01 | Berlin, DE | [Rust Berlin](https://example.com/)\n",
+            "    * [**Overlapping Event**](https://example.com/events/overlap/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Ok(()));
+        assert!(linter.safe_edits().is_empty());
     }
 
     #[test]
@@ -641,7 +738,7 @@ mod test {
         );
         assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
         assert_eq!(linter.previous_overview, None);
-        assert_eq!(linter.pending_overview, None);
+        assert_eq!(linter.pending_event, None);
         assert!(!linter.region_has_events);
     }
 

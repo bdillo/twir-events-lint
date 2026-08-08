@@ -2,8 +2,22 @@ use clap::Parser;
 use log::{error, info};
 use std::fs;
 use twir_events_lint::{
-    args::Args, events::EventsByRegion, linter::EventLinter, reader::EventsSection,
+    args::Args,
+    edit::{apply_edits, replace_file},
+    events::EventsByRegion,
+    linter::{EventLinter, LintError},
+    reader::EventsSection,
 };
+
+fn lint_document(
+    content: &str,
+    error_limit: u16,
+) -> anyhow::Result<(EventLinter, Result<(), LintError>)> {
+    let events_section = EventsSection::find(content)?;
+    let mut linter = EventLinter::new(error_limit);
+    let result = linter.lint(events_section.reader());
+    Ok((linter, result))
+}
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -17,12 +31,21 @@ fn main() -> anyhow::Result<()> {
     simple_logger::init_with_level(log_level).expect("failed to init logger");
 
     info!("reading file '{}'", args.draft().display());
-    let content = fs::read_to_string(args.draft())?;
-    let events_section = EventsSection::find(&content)?;
+    let mut content = fs::read_to_string(args.draft())?;
+    let (mut linter, mut lint_result) = lint_document(&content, args.error_limit())?;
 
-    let mut linter = EventLinter::new(args.error_limit());
-    if let Err(e) = linter.lint(events_section.reader()) {
-        error!("{}", e);
+    if args.fix() && !linter.safe_edits().is_empty() {
+        let edit_count = linter.safe_edits().len();
+        let updated = apply_edits(&content, linter.safe_edits())?;
+        replace_file(args.draft(), &updated)?;
+        info!("applied {edit_count} safe edit(s)");
+
+        content = updated;
+        (linter, lint_result) = lint_document(&content, args.error_limit())?;
+    }
+
+    if let Err(error) = lint_result {
+        error!("{}", error);
         std::process::exit(1);
     }
     info!("lgtm!");

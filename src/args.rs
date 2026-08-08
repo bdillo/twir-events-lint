@@ -10,6 +10,9 @@ pub struct Args {
     /// File containing new TWIR events
     #[arg(short, long)]
     new_events_file: Option<PathBuf>,
+    /// Remove events outside the newsletter date range
+    #[arg(long, default_value_t = false)]
+    fix: bool,
     /// Enable debug logging
     #[arg(long, default_value_t = false)]
     debug: bool,
@@ -25,6 +28,10 @@ impl Args {
 
     pub fn new_events_file(&self) -> &Option<PathBuf> {
         &self.new_events_file
+    }
+
+    pub fn fix(&self) -> bool {
+        self.fix
     }
 
     pub fn debug(&self) -> bool {
