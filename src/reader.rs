@@ -519,12 +519,27 @@ mod test {
     }
 
     #[test]
+    fn malformed_events_date_ranges_fail() {
+        for line in [
+            "Rusty Events between 2024-13-40 - 2024-11-20 🦀",
+            "Rusty Events between 2024-10-23 / 2024-11-20 🦀",
+        ] {
+            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
+        }
+    }
+
+    #[test]
     fn parsed_line_region_header() {
         let parsed = "### Virtual".parse::<ParsedLine>().unwrap();
         assert_eq!(parsed, ParsedLine::RegionHeader(Region::Virtual));
 
         let parsed = "### North America".parse::<ParsedLine>().unwrap();
         assert_eq!(parsed, ParsedLine::RegionHeader(Region::NorthAmerica));
+    }
+
+    #[test]
+    fn unknown_region_header_fails() {
+        assert!("### Atlantis".parse::<ParsedLine>().is_err());
     }
 
     #[test]
@@ -542,6 +557,17 @@ mod test {
                 assert_eq!(overview.groups().len(), 1);
             }
             _ => panic!("expected EventOverview"),
+        }
+    }
+
+    #[test]
+    fn malformed_event_overviews_fail() {
+        for line in [
+            "* not-a-date | Virtual | [Test Group](https://example.com/)",
+            "* 2024-10-24 Virtual [Test Group](https://example.com/)",
+            "* 2024-10-24 | Virtual | [Test Group](not-a-url)",
+        ] {
+            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
         }
     }
 
@@ -571,10 +597,14 @@ mod test {
     }
 
     #[test]
-    fn parsed_line_event_links_not_bold_fails() {
-        let line = "    * [Not Bold](https://example.com/)";
-        let result = line.parse::<ParsedLine>();
-        assert!(result.is_err());
+    fn malformed_event_links_fail() {
+        for line in [
+            "    * [Not Bold](https://example.com/)",
+            "    * [**Missing URL**]()",
+            "    * [**Invalid URL**](not-a-url)",
+        ] {
+            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
+        }
     }
 
     // Reader tests
