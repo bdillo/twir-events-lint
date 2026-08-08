@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::NaiveDate;
 use log::{debug, error};
 
@@ -6,10 +8,7 @@ use crate::{
     reader::{Line, ParsedLine, Reader},
 };
 
-// TODO:
-// - lint for empty regions
-// - check for duplicated links
-// - check meetup urls don't have that tracker in them
+// TODO: check meetup urls don't have that tracker in them
 
 /// Linter errors
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +27,15 @@ pub enum LintError {
     },
     EventOutOfOrder {
         line: Line<'static>,
+    },
+    EmptyRegion {
+        region: Region,
+        line: Line<'static>,
+    },
+    DuplicateEvent {
+        name: String,
+        url: String,
+        line: Box<Line<'static>>,
     },
     LintFailed(String),
 }
@@ -50,6 +58,12 @@ impl std::fmt::Display for LintError {
             }
             LintError::EventOutOfOrder { line } => {
                 format!("event should be after previous event date, not before\n{line}")
+            }
+            LintError::EmptyRegion { region, line } => {
+                format!("region '{region}' has no events\n{line}")
+            }
+            LintError::DuplicateEvent { name, url, line } => {
+                format!("duplicate event '{name}' ({url}) in region\n{line}")
             }
             LintError::LintFailed(msg) => format!("lint failed: {msg}"),
             LintError::DateRangeNotSet => "no newsletter date range found".to_owned(),
@@ -117,6 +131,8 @@ pub struct EventLinter {
     error_limit: u16,
     /// Collected `EventListing`s by region, in case we want to use them outside the linter
     events: EventsByRegion,
+    /// Event (name, URL) pairs seen in the current region, for duplicate detection
+    seen_events: HashSet<(String, String)>,
 }
 
 impl EventLinter {
@@ -130,6 +146,7 @@ impl EventLinter {
             error_count: 0,
             error_limit,
             events: EventsByRegion::new(),
+            seen_events: HashSet::new(),
         }
     }
 
@@ -186,6 +203,7 @@ impl EventLinter {
 
         match lint_result {
             Ok(_) => Ok(()),
+            Err(e @ LintError::LintFailed(_)) => Err(e),
             Err(e) => {
                 error!("{}", e);
 
@@ -206,7 +224,7 @@ impl EventLinter {
 
                 // if we reach this many errors something has probably gone very wrong, so just exit early
                 // rather than overwhelming the output with more error messages
-                if self.error_count == self.error_limit {
+                if self.error_count >= self.error_limit {
                     Err(LintError::LintFailed(
                         "reached our maximum error limit, bailing".to_owned(),
                     ))
@@ -214,6 +232,19 @@ impl EventLinter {
                     Ok(())
                 }
             }
+        }
+    }
+
+    /// Record a validation error. Logs it, increments the count, and returns Err only if the limit is hit.
+    fn record_error(&mut self, lint_error: LintError) -> Result<(), LintError> {
+        error!("{}", lint_error);
+        self.error_count += 1;
+        if self.error_count >= self.error_limit {
+            Err(LintError::LintFailed(
+                "reached our maximum error limit, bailing".to_owned(),
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -278,44 +309,32 @@ impl EventLinter {
                 let (range_start, range_end) = self.date_range()?;
 
                 // validate event is within date range
-                match overview.date() {
-                    // if it's just a single date, make sure its within the newsletter's range
-                    EventDate::Date(event_date) => {
-                        if !self.date_in_scope(event_date)? {
-                            return Err(LintError::EventOutOfDateRange {
-                                line: line.to_owned(),
-                                event_date: *overview.date(),
-                                start: range_start,
-                                end: range_end,
-                            });
-                        }
-                    }
-                    // if the event is a date range, see if either the start OR the end dates fall witin our range
+                let out_of_range = match overview.date() {
+                    EventDate::Date(event_date) => !self.date_in_scope(event_date)?,
                     EventDate::DateRange { start, end } => {
-                        let start_in_scope = self.date_in_scope(start)?;
-                        let end_in_scope = self.date_in_scope(end)?;
-
-                        if !(start_in_scope || end_in_scope) {
-                            return Err(LintError::EventOutOfDateRange {
-                                line: line.to_owned(),
-                                event_date: *overview.date(),
-                                start: range_start,
-                                end: range_end,
-                            });
-                        }
+                        !self.date_in_scope(start)? && !self.date_in_scope(end)?
                     }
+                };
+
+                if out_of_range {
+                    self.record_error(LintError::EventOutOfDateRange {
+                        line: line.to_owned(),
+                        event_date: *overview.date(),
+                        start: range_start,
+                        end: range_end,
+                    })?;
                 }
 
                 // if there is a previous event, compare to make sure our current one is later than the previous one
-                if let Some(prev_overview) = &self.overview {
-                    if overview < prev_overview {
-                        return Err(LintError::EventOutOfOrder {
-                            line: line.to_owned(),
-                        });
-                    }
+                if let Some(prev_overview) = &self.overview
+                    && overview < prev_overview
+                {
+                    self.record_error(LintError::EventOutOfOrder {
+                        line: line.to_owned(),
+                    })?;
                 }
 
-                // and save our previous event so we can compare it when looking at the next event
+                // always transition — the line parsed fine even if validation failed
                 self.overview = Some(overview.clone());
                 self.state = LinterState::ExpectingEventLinks;
 
@@ -323,11 +342,19 @@ impl EventLinter {
             }
             // If we hit a newline it should mean that we are done with a given regional section (Virtual, Asia, etc)
             ParsedLine::Newline => {
+                if self.overview.is_none()
+                    && let Some(region) = self.current_region
+                {
+                    self.record_error(LintError::EmptyRegion {
+                        region,
+                        line: line.to_owned(),
+                    })?;
+                }
                 self.state = LinterState::ExpectingRegionHeader;
-                // and reset our previous event to None, ordering is only internal to a region section
+                // reset per-region state
                 self.overview = None;
-                // and reset our region to None as well
                 self.current_region = None;
+                self.seen_events.clear();
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
@@ -341,6 +368,17 @@ impl EventLinter {
         match line.parsed() {
             ParsedLine::EventLinks(events) => {
                 self.state = LinterState::ExpectingEventOverview;
+
+                for event in events.iter() {
+                    let key = (event.name().to_owned(), event.url().as_str().to_owned());
+                    if !self.seen_events.insert(key.clone()) {
+                        self.record_error(LintError::DuplicateEvent {
+                            name: key.0,
+                            url: key.1,
+                            line: Box::new(line.to_owned()),
+                        })?;
+                    }
+                }
 
                 // we have the event overview and links now, so we can return a full `EventListing` in case we want to
                 // do something with it outside of the linter
@@ -435,6 +473,102 @@ mod test {
     }
 
     #[test]
+    fn stops_at_error_limit() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-09-01 | Berlin, DE | [Rust Berlin](https://www.meetup.com/rust-berlin/)\n",
+            "    * [**Out of Range Event**](https://www.meetup.com/rust-berlin/events/000001/)\n",
+            "\n",
+        );
+
+        let text = build_event_section(Some(extra));
+        let (section, line_num) = find_events_section(&text).unwrap();
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(1);
+
+        assert!(matches!(linter.lint(reader), Err(LintError::LintFailed(_))));
+        assert_eq!(linter.error_count, 1);
+    }
+
+    #[test]
+    fn out_of_range_event_does_not_cascade() {
+        let _ = simple_logger::init_with_level(log::Level::Error);
+
+        // An out-of-range event followed by valid events should produce exactly
+        // one error (the out-of-range event), not a cascade of state desync errors.
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-09-01 | Berlin, DE | [Rust Berlin](https://www.meetup.com/rust-berlin/)\n",
+            "    * [**Out of Range Event**](https://www.meetup.com/rust-berlin/events/000001/)\n",
+            "* 2024-10-25 | London, UK | [Rust London](https://www.meetup.com/rust-london/)\n",
+            "    * [**Valid Event**](https://www.meetup.com/rust-london/events/000002/)\n",
+            "\n",
+        );
+
+        let text = build_event_section(Some(extra));
+        let (section, line_num) = find_events_section(&text).unwrap();
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(20);
+        let result = linter.lint(reader);
+
+        assert!(result.is_err(), "should fail due to out-of-range event");
+        assert_eq!(
+            linter.error_count, 1,
+            "should have exactly 1 error, not a cascade"
+        );
+    }
+
+    #[test]
+    fn empty_region_does_not_cascade() {
+        let extra = concat!(
+            "### Asia\n",
+            "\n",
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://www.meetup.com/rust-berlin/)\n",
+            "    * [**Valid Event**](https://www.meetup.com/rust-berlin/events/000001/)\n",
+            "\n",
+        );
+
+        let text = build_event_section(Some(extra));
+        let (section, line_num) = find_events_section(&text).unwrap();
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(20);
+        let result = linter.lint(reader);
+
+        assert!(result.is_err(), "should fail due to empty region");
+        assert_eq!(
+            linter.error_count, 1,
+            "should have exactly 1 error, not a cascade"
+        );
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn duplicate_event_does_not_cascade() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://www.meetup.com/rust-berlin/)\n",
+            "    * [**Duplicate Event**](https://www.meetup.com/rust-berlin/events/000001/)\n",
+            "* 2024-10-26 | Berlin, DE | [Rust Berlin](https://www.meetup.com/rust-berlin/)\n",
+            "    * [**Duplicate Event**](https://www.meetup.com/rust-berlin/events/000001/)\n",
+            "\n",
+        );
+
+        let text = build_event_section(Some(extra));
+        let (section, line_num) = find_events_section(&text).unwrap();
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(20);
+        let result = linter.lint(reader);
+
+        assert!(result.is_err(), "should fail due to duplicate event");
+        assert_eq!(
+            linter.error_count, 1,
+            "should have exactly 1 error, not a cascade"
+        );
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
     fn valid_fixtures_pass() {
         let _ = simple_logger::init_with_level(log::Level::Error);
 
@@ -459,19 +593,9 @@ mod test {
         assert!(!fixtures.is_empty(), "no invalid fixtures found");
 
         for path in fixtures {
-            // Use catch_unwind because the linter may panic on some errors
-            // (error recovery isn't perfect). Both panics and Err are "failures".
-            let path_clone = path.clone();
-            let result = std::panic::catch_unwind(|| lint_file(&path_clone));
-
-            let failed = match result {
-                Ok(Ok(())) => false,  // lint passed - not what we want
-                Ok(Err(_)) => true,   // lint returned error - good
-                Err(_) => true,       // lint panicked - also counts as failure
-            };
-
+            let result = lint_file(&path);
             assert!(
-                failed,
+                result.is_err(),
                 "expected {} to fail, but it passed",
                 path.display()
             );

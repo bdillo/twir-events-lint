@@ -412,7 +412,10 @@ mod test {
     #[test]
     fn parse_event_date_single() {
         let (remaining, date) = parse_event_date("2024-10-24 | rest").unwrap();
-        assert_eq!(date, EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap()));
+        assert_eq!(
+            date,
+            EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap())
+        );
         assert_eq!(remaining, " | rest");
     }
 
@@ -440,7 +443,10 @@ mod test {
     #[test]
     fn parse_location_virtual_with_location() {
         let (remaining, loc) = parse_location("Virtual (Seattle, WA, US) | rest").unwrap();
-        assert_eq!(loc, EventLocation::VirtualWithLocation("Seattle, WA, US".to_string()));
+        assert_eq!(
+            loc,
+            EventLocation::VirtualWithLocation("Seattle, WA, US".to_string())
+        );
         assert_eq!(remaining, " | rest");
     }
 
@@ -468,14 +474,16 @@ mod test {
 
     #[test]
     fn parse_md_link_nested_brackets() {
-        let (remaining, link) = parse_md_link("[Label [with] brackets](https://example.com/)").unwrap();
+        let (remaining, link) =
+            parse_md_link("[Label [with] brackets](https://example.com/)").unwrap();
         assert_eq!(link.label(), "Label [with] brackets");
         assert_eq!(remaining, "");
     }
 
     #[test]
     fn parse_md_link_nested_parens_in_url() {
-        let (remaining, link) = parse_md_link("[Label](https://example.com/path_(with_parens)/)").unwrap();
+        let (remaining, link) =
+            parse_md_link("[Label](https://example.com/path_(with_parens)/)").unwrap();
         assert_eq!(link.label(), "Label");
         assert_eq!(remaining, "");
     }
@@ -495,7 +503,9 @@ mod test {
 
     #[test]
     fn parsed_line_events_date_range() {
-        let parsed = "Rusty Events between 2024-10-23 - 2024-11-20 🦀".parse::<ParsedLine>().unwrap();
+        let parsed = "Rusty Events between 2024-10-23 - 2024-11-20 🦀"
+            .parse::<ParsedLine>()
+            .unwrap();
         match parsed {
             ParsedLine::EventsDateRange { start, end } => {
                 assert_eq!(start, NaiveDate::from_ymd_opt(2024, 10, 23).unwrap());
@@ -516,11 +526,15 @@ mod test {
 
     #[test]
     fn parsed_line_event_overview() {
-        let line = "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
+        let line =
+            "* 2024-10-24 | Virtual | [Women in Rust](https://www.meetup.com/women-in-rust/)";
         let parsed = line.parse::<ParsedLine>().unwrap();
         match parsed {
             ParsedLine::EventOverview(overview) => {
-                assert_eq!(*overview.date(), EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap()));
+                assert_eq!(
+                    *overview.date(),
+                    EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 24).unwrap())
+                );
                 assert_eq!(*overview.location(), EventLocation::Virtual);
                 assert_eq!(overview.groups().len(), 1);
             }
@@ -542,7 +556,8 @@ mod test {
 
     #[test]
     fn parsed_line_event_links() {
-        let line = "    * [**Hackathon Showcase**](https://www.meetup.com/women-in-rust/events/123/)";
+        let line =
+            "    * [**Hackathon Showcase**](https://www.meetup.com/women-in-rust/events/123/)";
         let parsed = line.parse::<ParsedLine>().unwrap();
         match parsed {
             ParsedLine::EventLinks(events) => {

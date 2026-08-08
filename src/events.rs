@@ -250,6 +250,16 @@ pub struct Event {
     url: Url,
 }
 
+impl Event {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+}
+
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // we strip the bold when we read the link, just put it back here for formatting
