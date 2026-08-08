@@ -84,13 +84,18 @@ fn main() -> anyhow::Result<()> {
     let mut fix_count = 0;
 
     if let Err(error) = lint_result {
-        if !args.fix() || linter.safe_edits().is_empty() {
+        if !args.fix() {
+            error!("{}", error);
+            std::process::exit(1);
+        }
+        let edits = linter.safe_edits(&updated)?;
+        if edits.is_empty() {
             error!("{}", error);
             std::process::exit(1);
         }
 
-        fix_count = linter.safe_edits().len();
-        updated = apply_edits(&updated, linter.safe_edits())?;
+        fix_count = edits.len();
+        updated = apply_edits(&updated, &edits)?;
         let linted = lint_document(&updated, args.error_limit())?;
         linter = linted.0;
         if let Err(error) = linted.1 {

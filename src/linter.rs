@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use log::{debug, error};
 
 use crate::{
-    edit::{SourceSpan, TextEdit},
+    edit::{EditError, SourceSpan, TextEdit},
     events::{EventDate, EventOverview, EventsByRegion, Region},
     reader::{Line, ParsedLine, Reader},
 };
@@ -49,6 +49,16 @@ pub enum LintError {
         state: LinterState,
     },
     InternalInvariant(&'static str),
+}
+
+fn source_slice<'a>(document: &'a str, span: &SourceSpan) -> Result<&'a str, EditError> {
+    if span.start() > span.end() || span.end() > document.len() {
+        return Err(EditError::InvalidSpan(span.clone()));
+    }
+    if !document.is_char_boundary(span.start()) || !document.is_char_boundary(span.end()) {
+        return Err(EditError::NotCharacterBoundary(span.clone()));
+    }
+    Ok(&document[span.start()..span.end()])
 }
 
 impl LintError {
@@ -150,6 +160,19 @@ struct PendingEvent {
     remove: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RegionEventBlock {
+    overview: EventOverview,
+    span: SourceSpan,
+    remove: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RegionFixPlan {
+    span: SourceSpan,
+    blocks: Vec<SourceSpan>,
+}
+
 /// The state machine for linting the events section
 // TODO: keep track of newlines here, like in a counter? So we can lint for unexpected newlines between sections
 // TODO: move the reader back into the linter i think
@@ -176,6 +199,8 @@ pub struct EventLinter {
     region_removal_count: usize,
     /// Safe-edit index at which the current region began.
     region_edit_start: usize,
+    region_blocks: Vec<RegionEventBlock>,
+    region_structurally_complete: bool,
     /// Current error count
     error_count: u16,
     /// Maximum error count before bailing
@@ -186,6 +211,7 @@ pub struct EventLinter {
     seen_events: HashSet<(String, String)>,
     /// Safe source edits suggested by validation.
     safe_edits: Vec<TextEdit>,
+    region_fix_plans: Vec<RegionFixPlan>,
     /// Source boundaries of the complete regional event listing.
     event_listings_start: Option<usize>,
     source_end: Option<usize>,
@@ -205,11 +231,14 @@ impl EventLinter {
             region_event_count: 0,
             region_removal_count: 0,
             region_edit_start: 0,
+            region_blocks: Vec::new(),
+            region_structurally_complete: true,
             error_count: 0,
             error_limit,
             events: EventsByRegion::new(),
             seen_events: HashSet::new(),
             safe_edits: Vec::new(),
+            region_fix_plans: Vec::new(),
             event_listings_start: None,
             source_end: None,
         }
@@ -219,8 +248,16 @@ impl EventLinter {
         &self.events
     }
 
-    pub fn safe_edits(&self) -> &[TextEdit] {
-        &self.safe_edits
+    pub fn safe_edits(&self, document: &str) -> Result<Vec<TextEdit>, EditError> {
+        let mut edits = self.safe_edits.clone();
+        for plan in &self.region_fix_plans {
+            let mut replacement = String::new();
+            for span in &plan.blocks {
+                replacement.push_str(source_slice(document, span)?);
+            }
+            edits.push(TextEdit::new(plan.span.clone(), replacement));
+        }
+        Ok(edits)
     }
 
     pub fn newsletter_range(&self) -> Option<(NaiveDate, NaiveDate)> {
@@ -282,6 +319,9 @@ impl EventLinter {
             Ok(_) => Ok(()),
             Err(e) if e.is_terminal() => Err(e),
             Err(e @ LintError::UnexpectedLineType { .. }) => {
+                if self.current_region.is_some() {
+                    self.region_structurally_complete = false;
+                }
                 self.record_error(e)?;
                 self.recover_from_unexpected_line(line)
             }
@@ -292,6 +332,9 @@ impl EventLinter {
     }
 
     fn recover_after_parse_error(&mut self) {
+        if self.current_region.is_some() {
+            self.region_structurally_complete = false;
+        }
         if self.state == LinterState::ExpectingEventLinks {
             self.pending_event = None;
             self.state = LinterState::ExpectingEventOverview;
@@ -338,16 +381,45 @@ impl EventLinter {
         self.current_region = Some(region);
         self.region_start = Some(line.span().start());
         self.region_edit_start = self.safe_edits.len();
+        self.region_structurally_complete = true;
     }
 
     fn finish_region(&mut self, end: usize) {
-        if self.region_event_count > 0 && self.region_event_count == self.region_removal_count {
+        if self.region_blocks.is_empty() || !self.region_structurally_complete {
+            return;
+        }
+
+        if self.region_event_count == self.region_removal_count {
             self.safe_edits.truncate(self.region_edit_start);
             if let Some(start) = self.region_start {
                 self.safe_edits
                     .push(TextEdit::delete(SourceSpan::new(start, end)));
             }
+            return;
         }
+
+        let mut retained = self
+            .region_blocks
+            .iter()
+            .filter(|block| !block.remove)
+            .collect::<Vec<_>>();
+        let original_spans = retained.iter().map(|block| &block.span).collect::<Vec<_>>();
+        retained.sort_by(|left, right| left.overview.cmp(&right.overview));
+        let reordered = retained.iter().map(|block| &block.span).ne(original_spans);
+        if self.region_removal_count == 0 && !reordered {
+            return;
+        }
+
+        self.safe_edits.truncate(self.region_edit_start);
+        let first = self.region_blocks.first().expect("region has event blocks");
+        let last = self.region_blocks.last().expect("region has event blocks");
+        self.region_fix_plans.push(RegionFixPlan {
+            span: SourceSpan::new(first.span.start(), last.span.end()),
+            blocks: retained
+                .into_iter()
+                .map(|block| block.span.clone())
+                .collect(),
+        });
     }
 
     fn reset_region(&mut self) {
@@ -359,6 +431,8 @@ impl EventLinter {
         self.region_event_count = 0;
         self.region_removal_count = 0;
         self.region_edit_start = self.safe_edits.len();
+        self.region_blocks.clear();
+        self.region_structurally_complete = true;
         self.seen_events.clear();
     }
 
@@ -439,7 +513,8 @@ impl EventLinter {
                 }
 
                 // if there is a previous event, compare to make sure our current one is later than the previous one
-                if let Some(prev_overview) = &self.previous_overview
+                if !out_of_range
+                    && let Some(prev_overview) = &self.previous_overview
                     && overview < prev_overview
                 {
                     self.record_error(LintError::EventOutOfOrder {
@@ -514,7 +589,14 @@ impl EventLinter {
                     )));
                 }
 
-                self.previous_overview = Some(pending.overview.clone());
+                self.region_blocks.push(RegionEventBlock {
+                    overview: pending.overview.clone(),
+                    span: SourceSpan::new(pending.overview_span.start(), line.span().end()),
+                    remove: pending.remove,
+                });
+                if !pending.remove {
+                    self.previous_overview = Some(pending.overview.clone());
+                }
                 let listing = (pending.overview, events.to_owned()).into();
                 self.events.add(listing, region);
                 self.region_has_events = true;
@@ -693,9 +775,10 @@ mod test {
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
         );
-        assert_eq!(linter.safe_edits().len(), 1);
+        let edits = linter.safe_edits(&document).unwrap();
+        assert_eq!(edits.len(), 1);
 
-        let fixed = apply_edits(&document, linter.safe_edits()).unwrap();
+        let fixed = apply_edits(&document, &edits).unwrap();
         assert!(!fixed.contains("Out of Range Event"));
         assert!(!fixed.contains("* 2024-09-01 | Berlin"));
         assert!(fixed.contains("Valid Event"));
@@ -712,9 +795,93 @@ mod test {
         let document = build_event_section(Some(extra));
         let (_, linter) = lint_document(&document);
 
-        let fixed = apply_edits(&document, linter.safe_edits()).unwrap();
+        let edits = linter.safe_edits(&document).unwrap();
+        let fixed = apply_edits(&document, &edits).unwrap();
         assert!(!fixed.contains("### Europe"));
         assert!(!fixed.contains("Past Event"));
+    }
+
+    #[test]
+    fn reorders_complete_event_blocks_without_reformatting_them() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-27 | Zürich, CH | [Later Group](https://example.com/later/)\n",
+            "    * [**Later Event**](https://example.com/events/later/)\n",
+            "* 2024-10-25 | Århus, DK | [Earlier Group](https://example.com/earlier/)\n",
+            "    * [**Earlier Event**](https://example.com/events/earlier/) + [**Earlier Workshop**](https://example.com/events/workshop/)\n",
+            "\n",
+        );
+        let document = build_event_section(Some(extra));
+        let (result, linter) = lint_document(&document);
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        let edits = linter.safe_edits(&document).unwrap();
+        assert_eq!(edits.len(), 1);
+
+        let fixed = apply_edits(&document, &edits).unwrap();
+        assert!(fixed.find("Earlier Group").unwrap() < fixed.find("Later Group").unwrap());
+        assert!(fixed.contains(
+            "    * [**Earlier Event**](https://example.com/events/earlier/) + [**Earlier Workshop**](https://example.com/events/workshop/)\n"
+        ));
+        assert_eq!(lint_document(&fixed).0, Ok(()));
+    }
+
+    #[test]
+    fn combines_event_removal_and_reordering_in_one_region_edit() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-09-01 | Old, DE | [Old Group](https://example.com/old/)\n",
+            "    * [**Old Event**](https://example.com/events/old/)\n",
+            "* 2024-10-27 | Zürich, CH | [Later Group](https://example.com/later/)\n",
+            "    * [**Later Event**](https://example.com/events/later/)\n",
+            "* 2024-10-25 | Århus, DK | [Earlier Group](https://example.com/earlier/)\n",
+            "    * [**Earlier Event**](https://example.com/events/earlier/)\n",
+            "\n",
+        );
+        let document = build_event_section(Some(extra));
+        let (_, linter) = lint_document(&document);
+
+        let edits = linter.safe_edits(&document).unwrap();
+        assert_eq!(edits.len(), 1);
+        let fixed = apply_edits(&document, &edits).unwrap();
+
+        assert!(!fixed.contains("Old Event"));
+        assert!(fixed.find("Earlier Group").unwrap() < fixed.find("Later Group").unwrap());
+        assert_eq!(lint_document(&fixed).0, Ok(()));
+    }
+
+    #[test]
+    fn preserves_source_order_for_equal_sort_keys() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [First Group](https://example.com/first/)\n",
+            "    * [**First Event**](https://example.com/events/first/)\n",
+            "* 2024-10-25 | Berlin, DE | [Second Group](https://example.com/second/)\n",
+            "    * [**Second Event**](https://example.com/events/second/)\n",
+            "\n",
+        );
+        let document = build_event_section(Some(extra));
+        let (result, linter) = lint_document(&document);
+
+        assert_eq!(result, Ok(()));
+        assert!(linter.safe_edits(&document).unwrap().is_empty());
+    }
+
+    #[test]
+    fn does_not_reorder_a_structurally_invalid_region() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-27 | Paris, FR | [Later Group](https://example.com/later/)\n",
+            "    * [**Later Event**](https://example.com/events/later/)\n",
+            "this line is malformed\n",
+            "* 2024-10-25 | Berlin, DE | [Earlier Group](https://example.com/earlier/)\n",
+            "    * [**Earlier Event**](https://example.com/events/earlier/)\n",
+            "\n",
+        );
+        let document = build_event_section(Some(extra));
+        let (_, linter) = lint_document(&document);
+
+        assert!(linter.safe_edits(&document).unwrap().is_empty());
     }
 
     #[test]
@@ -726,10 +893,11 @@ mod test {
             "\n",
         );
 
-        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+        let document = build_event_section(Some(extra));
+        let (result, linter) = lint_document(&document);
 
         assert_eq!(result, Ok(()));
-        assert!(linter.safe_edits().is_empty());
+        assert!(linter.safe_edits(&document).unwrap().is_empty());
     }
 
     #[test]

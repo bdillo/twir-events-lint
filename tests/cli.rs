@@ -81,6 +81,34 @@ fn fix_removes_out_of_range_event_and_empty_region() {
 }
 
 #[test]
+fn fix_removes_and_reorders_events_idempotently() {
+    let draft = temporary_copy("fixable-ordering.md");
+
+    let first_output = run(&["--draft", draft.to_str().unwrap(), "--fix"]);
+    let fixed = std::fs::read_to_string(&draft).expect("failed to read fixed draft");
+    let second_output = run(&["--draft", draft.to_str().unwrap(), "--fix"]);
+    let fixed_again = std::fs::read_to_string(&draft).expect("failed to reread fixed draft");
+    std::fs::remove_file(&draft).expect("failed to remove temporary draft");
+
+    assert!(
+        first_output.status.success(),
+        "stderr: {}",
+        output_text(&first_output.stderr)
+    );
+    assert!(
+        second_output.status.success(),
+        "stderr: {}",
+        output_text(&second_output.stderr)
+    );
+    assert!(!fixed.contains("Old Event"));
+    assert!(fixed.find("Earlier Group").unwrap() < fixed.find("Later Group").unwrap());
+    assert!(fixed.contains(
+        "    * [**Earlier Event**](https://example.com/events/earlier/) + [**Workshop**](https://example.com/events/workshop/)"
+    ));
+    assert_eq!(fixed_again, fixed);
+}
+
+#[test]
 fn merge_output_matches_expected_markdown() {
     let draft = fixture("valid.md");
     let events = fixture("events.json");
