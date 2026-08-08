@@ -19,6 +19,10 @@ use crate::events::{
 const EVENTS_HEADER: &str = "## Upcoming Events";
 const EVENTS_FOOTER: &str =
     "If you are running a Rust event please add it to the [calendar] to get";
+const EVENTS_DATE_RANGE_PREFIX: &str = "Rusty Events between ";
+const REGION_HEADER_PREFIX: &str = "### ";
+const EVENT_OVERVIEW_PREFIX: &str = "* ";
+const EVENT_LINKS_PREFIX: &str = "    * ";
 
 /// High level error when reading lines from the newsletter
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,12 +85,46 @@ impl std::fmt::Display for Line<'_> {
     }
 }
 
+/// A recognized category of line in the events section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParsedLineKind {
+    EventsDateRange,
+    RegionHeader,
+    EventOverview,
+    EventLinks,
+}
+
+impl fmt::Display for ParsedLineKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::EventsDateRange => "events date range",
+            Self::RegionHeader => "region header",
+            Self::EventOverview => "event overview",
+            Self::EventLinks => "event links",
+        };
+        f.write_str(name)
+    }
+}
+
 /// An error when attempting to parse a raw line
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LineParseError {
+    InvalidLine {
+        kind: ParsedLineKind,
+        source: Box<LineParseError>,
+    },
     InvalidDate(chrono::format::ParseError),
     InvalidUrl(url::ParseError),
     ParseFailed(String),
+}
+
+impl LineParseError {
+    fn in_line(self, kind: ParsedLineKind) -> Self {
+        Self::InvalidLine {
+            kind,
+            source: Box::new(self),
+        }
+    }
 }
 
 impl From<chrono::format::ParseError> for LineParseError {
@@ -115,6 +153,9 @@ impl From<nom::Err<nom::error::Error<&str>>> for LineParseError {
 impl fmt::Display for LineParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            LineParseError::InvalidLine { kind, source } => {
+                write!(f, "invalid {kind}: {source}")
+            }
             LineParseError::InvalidDate(e) => write!(f, "invalid date: {e}"),
             LineParseError::InvalidUrl(e) => write!(f, "invalid url: {e}"),
             LineParseError::ParseFailed(e) => write!(f, "failed to parse line: {e}"),
@@ -122,7 +163,16 @@ impl fmt::Display for LineParseError {
     }
 }
 
-impl std::error::Error for LineParseError {}
+impl std::error::Error for LineParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidLine { source, .. } => Some(source),
+            Self::InvalidDate(error) => Some(error),
+            Self::InvalidUrl(error) => Some(error),
+            Self::ParseFailed(_) => None,
+        }
+    }
+}
 
 /// A parsed line, these are the lines we expect to see in the event section, lines in other sections will probably fail to parse
 /// in most situations
@@ -143,81 +193,80 @@ pub enum ParsedLine {
 impl FromStr for ParsedLine {
     type Err = LineParseError;
 
-    /// Entry point for parsing event lines
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.is_empty() {
+    fn from_str(line: &str) -> Result<Self, Self::Err> {
+        if line.is_empty() {
             return Ok(Self::Newline);
         }
 
-        if let (s, Some(_)) = opt(tag("Rusty Events between ")).parse(s)? {
-            let (s, start) = parse_date(s)?;
-            let (s, _) = tag(" - ")(s)?;
-            let (_, end) = parse_date(s)?;
+        let (kind, result) = if let Some(input) = line.strip_prefix(EVENTS_DATE_RANGE_PREFIX) {
+            (
+                ParsedLineKind::EventsDateRange,
+                parse_events_date_range(input),
+            )
+        } else if let Some(input) = line.strip_prefix(REGION_HEADER_PREFIX) {
+            (ParsedLineKind::RegionHeader, parse_region_header(input))
+        } else if let Some(input) = line.strip_prefix(EVENT_LINKS_PREFIX) {
+            (ParsedLineKind::EventLinks, parse_event_links_line(input))
+        } else if let Some(input) = line.strip_prefix(EVENT_OVERVIEW_PREFIX) {
+            (
+                ParsedLineKind::EventOverview,
+                parse_event_overview_line(input),
+            )
+        } else {
+            return Err(LineParseError::ParseFailed(format!(
+                "unrecognized line: {line}"
+            )));
+        };
 
-            return Ok(Self::EventsDateRange { start, end });
-        }
-
-        if let (s, Some(_)) = opt(tag("### ")).parse(s)? {
-            // TODO: fix to use region type
-            if let Ok(region) = s.parse::<Region>() {
-                return Ok(Self::RegionHeader(region));
-            }
-        }
-
-        if let (s, Some(_)) = opt(tag("* ")).parse(s)? {
-            // parsing as EventOverview, looks something like:
-            // "* 2024-10-23 | Austin, TX, US | [Rust ATX](https://www.meetup.com/rust-atx/)"
-            let (s, date) = parse_event_date(s)?;
-            let (s, _) = tag(" | ")(s)?;
-
-            let (s, location) = parse_location(s)?;
-            let (s, _) = tag(" | ")(s)?;
-
-            let mut links = Vec::new();
-            let (s, link) = parse_md_link(s)?;
-            links.push(link);
-
-            // FIXME: is this right?
-            let mut remaining = s;
-            loop {
-                let (s, tag) = opt(tag(" + ")).parse(remaining)?;
-
-                if tag.is_some() {
-                    let (s, link) = parse_md_link(s)?;
-                    remaining = s;
-                    links.push(link);
-                } else {
-                    break;
-                }
-            }
-
-            let groups: Vec<EventGroup> = links.into_iter().map(|l| l.into()).collect();
-            let groups = groups.into();
-
-            let overview = EventOverview::new(date, location, groups);
-            return Ok(Self::EventOverview(overview));
-        }
-
-        // TODO: what do multiple links here look like? i forget
-        if let (s, Some(_)) = opt(tag("    * ")).parse(s)? {
-            // parsing as EventLinks, looks like:
-            // "    * [**Ferris' Fika Forum #6**](https://www.meetup.com/stockholm-rust/events/303918943/)"
-            let (_, link) = parse_md_link(s)?;
-
-            // TODO: maybe find a better place for this?
-            if !link.label().starts_with("**") || !link.label().ends_with("**") {
-                return Err(LineParseError::ParseFailed(
-                    "event link is not bold".to_owned(),
-                ));
-            }
-
-            return Ok(Self::EventLinks(vec![link.into()].into()));
-        }
-
-        Err(LineParseError::ParseFailed(
-            format!("failed to parse: {s}",),
-        ))
+        result.map_err(|error| error.in_line(kind))
     }
+}
+
+fn parse_events_date_range(input: &str) -> Result<ParsedLine, LineParseError> {
+    let (input, start) = parse_date(input)?;
+    let (input, _) = tag(" - ")(input)?;
+    let (_, end) = parse_date(input)?;
+    Ok(ParsedLine::EventsDateRange { start, end })
+}
+
+fn parse_region_header(input: &str) -> Result<ParsedLine, LineParseError> {
+    let region = input
+        .parse::<Region>()
+        .map_err(LineParseError::ParseFailed)?;
+    Ok(ParsedLine::RegionHeader(region))
+}
+
+fn parse_event_overview_line(input: &str) -> Result<ParsedLine, LineParseError> {
+    let (input, date) = parse_event_date(input)?;
+    let (input, _) = tag(" | ")(input)?;
+    let (input, location) = parse_location(input)?;
+    let (mut remaining, _) = tag(" | ")(input)?;
+
+    let mut groups = Vec::new();
+    let (input, group) = parse_md_link(remaining)?;
+    groups.push(EventGroup::from(group));
+    remaining = input;
+
+    while let (input, Some(_)) = opt(tag(" + ")).parse(remaining)? {
+        let (input, group) = parse_md_link(input)?;
+        groups.push(EventGroup::from(group));
+        remaining = input;
+    }
+
+    let overview = EventOverview::new(date, location, groups.into());
+    Ok(ParsedLine::EventOverview(overview))
+}
+
+fn parse_event_links_line(input: &str) -> Result<ParsedLine, LineParseError> {
+    let (_, link) = parse_md_link(input)?;
+
+    if !link.label().starts_with("**") || !link.label().ends_with("**") {
+        return Err(LineParseError::ParseFailed(
+            "event link is not bold".to_owned(),
+        ));
+    }
+
+    Ok(ParsedLine::EventLinks(vec![link.into()].into()))
 }
 
 impl fmt::Display for ParsedLine {
@@ -403,6 +452,14 @@ mod test {
     use super::*;
     use chrono::NaiveDate;
 
+    fn assert_invalid_line_kind(line: &str, expected: ParsedLineKind) {
+        let error = line.parse::<ParsedLine>().unwrap_err();
+        assert!(
+            matches!(&error, LineParseError::InvalidLine { kind, .. } if *kind == expected),
+            "unexpected error for '{line}': {error}"
+        );
+    }
+
     // parse_date tests
     #[test]
     fn parse_date_valid() {
@@ -524,7 +581,7 @@ mod test {
             "Rusty Events between 2024-13-40 - 2024-11-20 🦀",
             "Rusty Events between 2024-10-23 / 2024-11-20 🦀",
         ] {
-            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
+            assert_invalid_line_kind(line, ParsedLineKind::EventsDateRange);
         }
     }
 
@@ -539,7 +596,7 @@ mod test {
 
     #[test]
     fn unknown_region_header_fails() {
-        assert!("### Atlantis".parse::<ParsedLine>().is_err());
+        assert_invalid_line_kind("### Atlantis", ParsedLineKind::RegionHeader);
     }
 
     #[test]
@@ -567,7 +624,7 @@ mod test {
             "* 2024-10-24 Virtual [Test Group](https://example.com/)",
             "* 2024-10-24 | Virtual | [Test Group](not-a-url)",
         ] {
-            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
+            assert_invalid_line_kind(line, ParsedLineKind::EventOverview);
         }
     }
 
@@ -603,7 +660,7 @@ mod test {
             "    * [**Missing URL**]()",
             "    * [**Invalid URL**](not-a-url)",
         ] {
-            assert!(line.parse::<ParsedLine>().is_err(), "line: {line}");
+            assert_invalid_line_kind(line, ParsedLineKind::EventLinks);
         }
     }
 
