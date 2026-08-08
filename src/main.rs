@@ -4,7 +4,7 @@ use std::fs;
 use twir_events_lint::{
     args::Args,
     edit::{TextEdit, apply_edits, replace_file},
-    events::EventsByRegion,
+    events::{CollectedEventsByRegion, EventsByRegion},
     linter::{EventLinter, LintError},
     reader::EventsSection,
 };
@@ -56,8 +56,15 @@ fn main() -> anyhow::Result<()> {
         info!("reading new events file '{}'", new_events_file.display());
         let content = fs::read_to_string(new_events_file)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {}", new_events_file.display(), e))?;
-        let incoming: EventsByRegion = serde_json::from_str(&content)
+        let collected: CollectedEventsByRegion = serde_json::from_str(&content)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {}", new_events_file.display(), e))?;
+        let incoming = EventsByRegion::try_from(collected).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to convert events from {}: {}",
+                new_events_file.display(),
+                e
+            )
+        })?;
 
         let (range_start, range_end) = linter.newsletter_range().ok_or_else(|| {
             anyhow::anyhow!("newsletter date range unavailable after successful lint")

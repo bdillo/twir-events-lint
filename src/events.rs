@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::NaiveDate;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 const VIRTUAL: &str = "Virtual";
@@ -16,7 +16,7 @@ const OCEANIA: &str = "Oceania";
 const SOUTH_AMERICA: &str = "South America";
 
 /// Regional headers for events
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum Region {
     Virtual,
     Africa,
@@ -421,66 +421,121 @@ impl From<(EventOverview, Events)> for EventListing {
     }
 }
 
-// vibecoded, be aware
-impl<'de> Deserialize<'de> for EventListing {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
+/// Event data as exchanged with an external collector.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CollectedEvent {
+    pub name: String,
+    pub location: String,
+    pub date: String,
+    pub url: String,
+    #[serde(rename = "virtual")]
+    pub is_virtual: bool,
+    pub organizer_name: String,
+    pub organizer_url: String,
+    #[serde(rename = "hybrid")]
+    pub is_hybrid: bool,
+}
 
-        #[derive(Deserialize)]
-        struct JsonEvent {
-            name: String,
-            location: String,
-            date: String,
-            url: String,
-            #[serde(rename = "virtual")]
-            is_virtual: bool,
-            organizer_name: String,
-            organizer_url: String,
-            #[serde(rename = "hybrid")]
-            is_hybrid: bool,
+#[derive(Debug)]
+pub enum CollectedEventError {
+    InvalidDate(chrono::format::ParseError),
+    InvalidEventUrl(url::ParseError),
+    InvalidOrganizerUrl(url::ParseError),
+}
+
+impl std::fmt::Display for CollectedEventError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidDate(error) => {
+                write!(f, "invalid date, expected YYYY-MM-DD: {error}")
+            }
+            Self::InvalidEventUrl(error) => write!(f, "invalid event URL: {error}"),
+            Self::InvalidOrganizerUrl(error) => write!(f, "invalid organizer URL: {error}"),
         }
+    }
+}
 
-        let json_event = JsonEvent::deserialize(deserializer)?;
+impl std::error::Error for CollectedEventError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidDate(error) => Some(error),
+            Self::InvalidEventUrl(error) | Self::InvalidOrganizerUrl(error) => Some(error),
+        }
+    }
+}
 
-        let date = NaiveDate::parse_from_str(&json_event.date, "%Y-%m-%d")
-            .map_err(|_| Error::custom("invalid date format, expected YYYY-MM-DD"))?;
+impl TryFrom<CollectedEvent> for EventListing {
+    type Error = CollectedEventError;
 
-        let event_url =
-            Url::parse(&json_event.url).map_err(|_| Error::custom("invalid event URL"))?;
-        let organizer_url = Url::parse(&json_event.organizer_url)
-            .map_err(|_| Error::custom("invalid organizer URL"))?;
+    fn try_from(collected: CollectedEvent) -> Result<Self, Self::Error> {
+        let date = NaiveDate::parse_from_str(&collected.date, "%Y-%m-%d")
+            .map_err(CollectedEventError::InvalidDate)?;
+        let event_url = Url::parse(&collected.url).map_err(CollectedEventError::InvalidEventUrl)?;
+        let organizer_url = Url::parse(&collected.organizer_url)
+            .map_err(CollectedEventError::InvalidOrganizerUrl)?;
 
-        let location = if json_event.is_hybrid {
-            EventLocation::Hybrid(json_event.location)
-        } else if json_event.is_virtual {
-            EventLocation::VirtualWithLocation(json_event.location)
+        let location = if collected.is_hybrid {
+            EventLocation::Hybrid(collected.location)
+        } else if collected.is_virtual {
+            EventLocation::VirtualWithLocation(collected.location)
         } else {
-            EventLocation::InPerson(json_event.location)
+            EventLocation::InPerson(collected.location)
         };
-
         let group = EventGroup {
-            name: json_event.organizer_name,
+            name: collected.organizer_name,
             url: organizer_url,
         };
-
         let overview = EventOverview {
             date: EventDate::Date(date),
             location,
             groups: EventGroups(vec![group]),
         };
-
         let event = Event {
-            name: json_event.name,
+            name: collected.name,
             url: event_url,
         };
 
-        Ok(EventListing {
+        Ok(Self {
             overview,
             events: Events(vec![event]),
         })
+    }
+}
+
+/// Collected events grouped by their TWIR region.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CollectedEventsByRegion(HashMap<Region, Vec<CollectedEvent>>);
+
+impl CollectedEventsByRegion {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, event: CollectedEvent, region: Region) {
+        self.0.entry(region).or_default().push(event);
+    }
+}
+
+#[derive(Debug)]
+pub struct CollectedEventsError {
+    region: Region,
+    event_name: String,
+    source: CollectedEventError,
+}
+
+impl std::fmt::Display for CollectedEventsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid collected event '{}' in {}: {}",
+            self.event_name, self.region, self.source
+        )
+    }
+}
+
+impl std::error::Error for CollectedEventsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 
@@ -585,23 +640,34 @@ impl From<HashMap<Region, Vec<EventListing>>> for EventsByRegion {
     }
 }
 
+impl TryFrom<CollectedEventsByRegion> for EventsByRegion {
+    type Error = CollectedEventsError;
+
+    fn try_from(collected: CollectedEventsByRegion) -> Result<Self, Self::Error> {
+        let mut events = Self::new();
+        for (region, collected_events) in collected.0 {
+            for collected_event in collected_events {
+                let event_name = collected_event.name.clone();
+                let listing = EventListing::try_from(collected_event).map_err(|source| {
+                    CollectedEventsError {
+                        region,
+                        event_name,
+                        source,
+                    }
+                })?;
+                events.add(listing, region);
+            }
+        }
+        Ok(events)
+    }
+}
+
 impl<'a> IntoIterator for &'a EventsByRegion {
     type Item = (&'a Region, &'a Vec<EventListing>);
     type IntoIter = std::collections::hash_map::Iter<'a, Region, Vec<EventListing>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
-    }
-}
-
-impl<'de> Deserialize<'de> for EventsByRegion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // TODO: can we just derive this?
-        let regions: HashMap<Region, Vec<EventListing>> = HashMap::deserialize(deserializer)?;
-        Ok(regions.into())
     }
 }
 
@@ -624,5 +690,59 @@ impl std::fmt::Display for EventsByRegion {
         }
 
         f.write_str(&output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collected_event() -> CollectedEvent {
+        CollectedEvent {
+            name: "Test Event".to_owned(),
+            location: "Berlin, DE".to_owned(),
+            date: "2024-10-25".to_owned(),
+            url: "https://example.com/events/1/".to_owned(),
+            is_virtual: true,
+            organizer_name: "Test Group".to_owned(),
+            organizer_url: "https://example.com/group/".to_owned(),
+            is_hybrid: false,
+        }
+    }
+
+    #[test]
+    fn collected_event_uses_external_field_names() {
+        let json = serde_json::to_value(collected_event()).unwrap();
+
+        assert_eq!(json["virtual"], true);
+        assert_eq!(json["hybrid"], false);
+        assert!(json.get("is_virtual").is_none());
+        assert!(json.get("is_hybrid").is_none());
+    }
+
+    #[test]
+    fn collected_event_converts_to_domain_listing() {
+        let listing = EventListing::try_from(collected_event()).unwrap();
+
+        assert_eq!(listing.events()[0].name(), "Test Event");
+        assert_eq!(
+            listing.overview().date(),
+            &EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 25).unwrap())
+        );
+        assert_eq!(
+            listing.overview().location(),
+            &EventLocation::VirtualWithLocation("Berlin, DE".to_owned())
+        );
+    }
+
+    #[test]
+    fn invalid_collected_event_is_rejected_during_conversion() {
+        let mut collected = collected_event();
+        collected.url = "not-a-url".to_owned();
+
+        assert!(matches!(
+            EventListing::try_from(collected),
+            Err(CollectedEventError::InvalidEventUrl(_))
+        ));
     }
 }
