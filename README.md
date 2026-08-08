@@ -32,3 +32,20 @@ cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md 
 ```
 
 Incoming events outside the newsletter date range are logged and omitted. The complete candidate document is linted before any changes are atomically written.
+
+## Fetch from Meetup
+
+Fetch events for configured Meetup groups and preview the merged listing:
+
+```sh
+export MEETUP_PRIVATE_KEY="$HOME/.ssh/meetup_signing_key.pem"
+export MEETUP_AUTHORIZED_MEMBER_ID="..."
+export MEETUP_CLIENT_KEY="..."
+
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
+  --meetup-groups meetup-automation/groups/rust-meetups.json
+```
+
+Add `--in-place` to atomically update the draft. Meetup collection uses the date range declared in the draft. `--meetup-groups` can be combined with `--new-events-file`; manually supplied events take precedence when event URLs overlap.
+
+If the OAuth client has multiple signing keys or requires explicit key selection, also set `MEETUP_SIGNING_KEY_ID`; it is otherwise optional for compatibility with existing Meetup clients.

@@ -1,8 +1,10 @@
+use chrono::NaiveDate;
 use clap::Parser;
 use log::{error, info, warn};
-use std::fs;
+use std::{fs, path::Path};
 use twir_events_lint::{
     args::Args,
+    collect::meetup,
     edit::{TextEdit, apply_edits, replace_file},
     events::{CollectedEventsByRegion, EventsByRegion},
     linter::{EventLinter, LintError},
@@ -19,6 +21,47 @@ fn lint_document(
     Ok((linter, result))
 }
 
+fn read_collected_events(path: &Path) -> anyhow::Result<EventsByRegion> {
+    info!("reading new events file '{}'", path.display());
+    let content = fs::read_to_string(path)
+        .map_err(|error| anyhow::anyhow!("failed to read {}: {}", path.display(), error))?;
+    let collected: CollectedEventsByRegion = serde_json::from_str(&content)
+        .map_err(|error| anyhow::anyhow!("failed to parse {}: {}", path.display(), error))?;
+    EventsByRegion::try_from(collected).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to convert events from {}: {}",
+            path.display(),
+            error
+        )
+    })
+}
+
+fn collect_incoming_events(
+    args: &Args,
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+) -> anyhow::Result<Option<EventsByRegion>> {
+    let mut incoming = EventsByRegion::new();
+    let mut has_source = false;
+
+    if let Some(groups_path) = args.meetup_groups() {
+        info!("collecting Meetup events using '{}'", groups_path.display());
+        let collection = meetup::collect(groups_path, range_start, range_end)?;
+        for warning in collection.warnings {
+            warn!("{warning}");
+        }
+        incoming = incoming.merge(&EventsByRegion::try_from(collection.events)?);
+        has_source = true;
+    }
+
+    if let Some(new_events_file) = args.new_events_file() {
+        incoming = incoming.merge(&read_collected_events(new_events_file)?);
+        has_source = true;
+    }
+
+    Ok(has_source.then_some(incoming))
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -29,6 +72,10 @@ fn main() -> anyhow::Result<()> {
     };
 
     simple_logger::init_with_level(log_level).expect("failed to init logger");
+
+    if args.in_place() && args.new_events_file().is_none() && args.meetup_groups().is_none() {
+        anyhow::bail!("--in-place requires --new-events-file or --meetup-groups");
+    }
 
     info!("reading file '{}'", args.draft().display());
     let original = fs::read_to_string(args.draft())?;
@@ -52,23 +99,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    if let Some(new_events_file) = args.new_events_file() {
-        info!("reading new events file '{}'", new_events_file.display());
-        let content = fs::read_to_string(new_events_file)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", new_events_file.display(), e))?;
-        let collected: CollectedEventsByRegion = serde_json::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {}", new_events_file.display(), e))?;
-        let incoming = EventsByRegion::try_from(collected).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to convert events from {}: {}",
-                new_events_file.display(),
-                e
-            )
-        })?;
-
-        let (range_start, range_end) = linter.newsletter_range().ok_or_else(|| {
-            anyhow::anyhow!("newsletter date range unavailable after successful lint")
-        })?;
+    let (range_start, range_end) = linter.newsletter_range().ok_or_else(|| {
+        anyhow::anyhow!("newsletter date range unavailable after successful lint")
+    })?;
+    if let Some(incoming) = collect_incoming_events(&args, range_start, range_end)? {
         let (incoming, dropped) = incoming.partition_by_date_range(range_start, range_end);
         for (region, event) in dropped {
             let names = event
