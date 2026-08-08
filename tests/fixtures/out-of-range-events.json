@@ -1,0 +1,14 @@
+{
+  "Europe": [
+    {
+      "name": "Old Incoming Event",
+      "location": "Berlin, DE",
+      "date": "2024-10-01",
+      "url": "https://example.com/events/old-incoming/",
+      "virtual": false,
+      "organizer_name": "Old Group",
+      "organizer_url": "https://example.com/old-group/",
+      "hybrid": false
+    }
+  ]
+}

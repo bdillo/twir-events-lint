@@ -391,6 +391,10 @@ impl<'a> Reader<'a> {
             current_offset: start_offset,
         }
     }
+
+    pub fn end_offset(&self) -> usize {
+        self.current_offset + self.contents.len()
+    }
 }
 
 impl<'a> Iterator for Reader<'a> {

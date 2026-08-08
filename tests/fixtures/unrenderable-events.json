@@ -1,0 +1,14 @@
+{
+  "Europe": [
+    {
+      "name": "Bad ] Event",
+      "location": "Paris, FR",
+      "date": "2024-10-26",
+      "url": "https://example.com/events/bad/",
+      "virtual": false,
+      "organizer_name": "Test Group",
+      "organizer_url": "https://example.com/group/",
+      "hybrid": false
+    }
+  ]
+}

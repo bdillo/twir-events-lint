@@ -16,11 +16,19 @@ Fixes are prepared in memory and then atomically written back to the draft. If e
 
 # Merge
 
-Merge events from the Meetup automation with the current draft events:
+Preview a merge of externally collected events with the current draft:
 
 ```sh
 cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
   --new-events-file ~/scratch/14may
 ```
 
-The command prints the merged event section, which can be copied into the draft.
+Write the merged event listing back to the draft:
+
+```sh
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
+  --new-events-file ~/scratch/14may \
+  --in-place
+```
+
+Incoming events outside the newsletter date range are logged and omitted. The complete candidate document is linted before any changes are atomically written.

@@ -186,6 +186,9 @@ pub struct EventLinter {
     seen_events: HashSet<(String, String)>,
     /// Safe source edits suggested by validation.
     safe_edits: Vec<TextEdit>,
+    /// Source boundaries of the complete regional event listing.
+    event_listings_start: Option<usize>,
+    source_end: Option<usize>,
 }
 
 impl EventLinter {
@@ -207,6 +210,8 @@ impl EventLinter {
             events: EventsByRegion::new(),
             seen_events: HashSet::new(),
             safe_edits: Vec::new(),
+            event_listings_start: None,
+            source_end: None,
         }
     }
 
@@ -218,7 +223,20 @@ impl EventLinter {
         &self.safe_edits
     }
 
+    pub fn newsletter_range(&self) -> Option<(NaiveDate, NaiveDate)> {
+        self.start.zip(self.end)
+    }
+
+    pub fn event_listings_span(&self) -> Option<SourceSpan> {
+        let end = self.source_end?;
+        Some(SourceSpan::new(
+            self.event_listings_start.unwrap_or(end),
+            end,
+        ))
+    }
+
     pub fn lint(&mut self, reader: Reader) -> Result<(), LintError> {
+        self.source_end = Some(reader.end_offset());
         for line in reader {
             match line {
                 Ok(line) => self.lint_line(&line)?,
@@ -316,6 +334,7 @@ impl EventLinter {
     }
 
     fn start_region(&mut self, region: Region, line: &Line) {
+        self.event_listings_start.get_or_insert(line.span().start());
         self.current_region = Some(region);
         self.region_start = Some(line.span().start());
         self.region_edit_start = self.safe_edits.len();
@@ -366,12 +385,7 @@ impl EventLinter {
 
     fn event_in_scope(&self, event_date: &EventDate) -> Result<bool, LintError> {
         let (newsletter_start, newsletter_end) = self.date_range()?;
-        Ok(match event_date {
-            EventDate::Date(date) => date >= &newsletter_start && date <= &newsletter_end,
-            EventDate::DateRange { start, end } => {
-                start <= &newsletter_end && end >= &newsletter_start
-            }
-        })
+        Ok(event_date.overlaps(newsletter_start, newsletter_end))
     }
 
     fn expecting_events_date_range(&mut self, line: &Line) -> Result<(), LintError> {

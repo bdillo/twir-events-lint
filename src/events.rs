@@ -97,6 +97,15 @@ pub enum EventDate {
     DateRange { start: NaiveDate, end: NaiveDate },
 }
 
+impl EventDate {
+    pub fn overlaps(&self, range_start: NaiveDate, range_end: NaiveDate) -> bool {
+        match self {
+            Self::Date(date) => date >= &range_start && date <= &range_end,
+            Self::DateRange { start, end } => start <= &range_end && end >= &range_start,
+        }
+    }
+}
+
 impl std::fmt::Display for EventDate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -320,6 +329,16 @@ pub struct EventListing {
     events: Events,
 }
 
+impl EventListing {
+    pub fn overview(&self) -> &EventOverview {
+        &self.overview
+    }
+
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+}
+
 impl Ord for EventListing {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.overview.cmp(&other.overview)
@@ -477,6 +496,29 @@ impl EventsByRegion {
         self.0.entry(region).or_default().push(listing)
     }
 
+    pub fn partition_by_date_range(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> (Self, Vec<(Region, EventListing)>) {
+        let mut included = Self::new();
+        let mut excluded = Vec::new();
+
+        for region in Region::ALL {
+            if let Some(events) = self.0.get(&region) {
+                for event in events {
+                    if event.overview.date.overlaps(start, end) {
+                        included.add(event.clone(), region);
+                    } else {
+                        excluded.push((region, event.clone()));
+                    }
+                }
+            }
+        }
+
+        (included, excluded)
+    }
+
     pub fn merge(&self, other: &EventsByRegion) -> Self {
         let mut updated = EventsByRegion::new();
 
@@ -565,23 +607,22 @@ impl<'de> Deserialize<'de> for EventsByRegion {
 
 impl std::fmt::Display for EventsByRegion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = String::new();
+        let mut output = String::new();
 
         for region in Region::ALL {
-            if let Some(events) = self.0.get(&region) {
-                // TODO: cleanup
-                let mut events = events.clone();
-                events.sort();
+            let Some(events) = self.0.get(&region).filter(|events| !events.is_empty()) else {
+                continue;
+            };
+            let mut events = events.clone();
+            events.sort();
 
-                s.push_str(&format!("### {region}\n"));
-
-                for event in events {
-                    s.push_str(&format!("{event}"));
-                }
+            output.push_str(&format!("### {region}\n"));
+            for event in events {
+                output.push_str(&event.to_string());
             }
-            s.push('\n');
+            output.push('\n');
         }
 
-        write!(f, "{s}")
+        f.write_str(&output)
     }
 }

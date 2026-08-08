@@ -10,6 +10,9 @@ pub struct Args {
     /// File containing new TWIR events
     #[arg(short, long)]
     new_events_file: Option<PathBuf>,
+    /// Write merged new events back to the draft
+    #[arg(long, default_value_t = false, requires = "new_events_file")]
+    in_place: bool,
     /// Remove events outside the newsletter date range
     #[arg(long, default_value_t = false)]
     fix: bool,
@@ -28,6 +31,10 @@ impl Args {
 
     pub fn new_events_file(&self) -> &Option<PathBuf> {
         &self.new_events_file
+    }
+
+    pub fn in_place(&self) -> bool {
+        self.in_place
     }
 
     pub fn fix(&self) -> bool {
