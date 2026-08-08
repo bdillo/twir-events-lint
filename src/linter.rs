@@ -59,6 +59,7 @@ impl LintError {
                 | Self::UnexpectedEnd { .. }
                 | Self::RecoveryFailed { .. }
                 | Self::InternalInvariant(_)
+                | Self::DateRangeNotSet
         )
     }
 }
@@ -206,7 +207,7 @@ impl EventLinter {
                             limit: self.error_limit,
                         });
                     }
-                    // Parse errors don't change linter state - we skip the line
+                    self.recover_after_parse_error();
                 }
             }
         }
@@ -240,30 +241,64 @@ impl EventLinter {
         match lint_result {
             Ok(_) => Ok(()),
             Err(e) if e.is_terminal() => Err(e),
-            Err(e) => {
-                error!("{}", e);
+            Err(e @ LintError::UnexpectedLineType { .. }) => {
+                self.record_error(e)?;
+                self.recover_from_unexpected_line(line)
+            }
+            Err(_) => Err(LintError::InternalInvariant(
+                "non-terminal error has no recovery strategy",
+            )),
+        }
+    }
 
-                // attempt to continue to parse, this could print out a bunch of errors in some cases
-                // setting the next state is a total guess here and only makes sense in a few states
-                self.state = match self.state {
-                    LinterState::ExpectingEventOverview => LinterState::ExpectingEventLinks,
-                    LinterState::ExpectingEventLinks => LinterState::ExpectingEventOverview,
-                    _ => return Err(LintError::RecoveryFailed { state: self.state }),
-                };
+    fn recover_after_parse_error(&mut self) {
+        if self.state == LinterState::ExpectingEventLinks {
+            self.pending_overview = None;
+            self.state = LinterState::ExpectingEventOverview;
+        }
+    }
 
-                self.error_count += 1;
-
-                // if we reach this many errors something has probably gone very wrong, so just exit early
-                // rather than overwhelming the output with more error messages
-                if self.error_count >= self.error_limit {
-                    Err(LintError::ErrorLimitReached {
-                        limit: self.error_limit,
-                    })
-                } else {
-                    Ok(())
+    fn recover_from_unexpected_line(&mut self, line: &Line) -> Result<(), LintError> {
+        match self.state {
+            LinterState::ExpectingStartEventSection | LinterState::ExpectingEventsDateRange => {
+                Err(LintError::RecoveryFailed { state: self.state })
+            }
+            LinterState::ExpectingRegionHeader => Ok(()),
+            LinterState::ExpectingEventOverview | LinterState::ExpectingEventLinks => {
+                match line.parsed() {
+                    ParsedLine::RegionHeader(region) => {
+                        self.reset_region();
+                        self.current_region = Some(*region);
+                        self.state = LinterState::ExpectingEventOverview;
+                        Ok(())
+                    }
+                    ParsedLine::Newline => {
+                        self.reset_region();
+                        self.state = LinterState::ExpectingRegionHeader;
+                        Ok(())
+                    }
+                    ParsedLine::EventOverview(_) => {
+                        self.pending_overview = None;
+                        self.state = LinterState::ExpectingEventOverview;
+                        self.expecting_event_overview(line)
+                    }
+                    ParsedLine::EventLinks(_) => {
+                        self.pending_overview = None;
+                        self.state = LinterState::ExpectingEventOverview;
+                        Ok(())
+                    }
+                    ParsedLine::StartEventSection | ParsedLine::EventsDateRange { .. } => Ok(()),
                 }
             }
         }
+    }
+
+    fn reset_region(&mut self) {
+        self.previous_overview = None;
+        self.pending_overview = None;
+        self.region_has_events = false;
+        self.current_region = None;
+        self.seen_events.clear();
     }
 
     /// Record a validation error. Logs it, increments the count, and returns Err only if the limit is hit.
@@ -366,7 +401,6 @@ impl EventLinter {
                 }
 
                 // always transition — the line parsed fine even if validation failed
-                self.previous_overview = Some(overview.clone());
                 self.pending_overview = Some(overview.clone());
                 self.state = LinterState::ExpectingEventLinks;
 
@@ -383,12 +417,7 @@ impl EventLinter {
                     })?;
                 }
                 self.state = LinterState::ExpectingRegionHeader;
-                // reset per-region state
-                self.previous_overview = None;
-                self.pending_overview = None;
-                self.region_has_events = false;
-                self.current_region = None;
-                self.seen_events.clear();
+                self.reset_region();
                 Ok(())
             }
             _ => Err(LintError::UnexpectedLineType {
@@ -424,6 +453,7 @@ impl EventLinter {
                     .current_region
                     .ok_or(LintError::InternalInvariant("no current region set"))?;
 
+                self.previous_overview = Some(overview.clone());
                 let listing = (overview, events.to_owned()).into();
                 self.events.add(listing, region);
                 self.region_has_events = true;
@@ -478,6 +508,22 @@ mod test {
         linter.lint(reader)
     }
 
+    fn event_count(linter: &EventLinter) -> usize {
+        linter
+            .events()
+            .into_iter()
+            .map(|(_, events)| events.len())
+            .sum()
+    }
+
+    fn lint_document(content: &str) -> (Result<(), LintError>, EventLinter) {
+        let (section, line_num) = find_events_section(content).unwrap();
+        let reader = Reader::new(section, line_num);
+        let mut linter = EventLinter::new(20);
+        let result = linter.lint(reader);
+        (result, linter)
+    }
+
     fn collect_fixtures(dir: &str) -> Vec<std::path::PathBuf> {
         let path = Path::new(dir);
         if !path.exists() {
@@ -506,12 +552,7 @@ mod test {
         let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
 
-        let event_count = linter
-            .events()
-            .into_iter()
-            .map(|(_, events)| events.len())
-            .sum::<usize>();
-        assert_eq!(event_count, 1);
+        assert_eq!(event_count(&linter), 1);
         assert_eq!(linter.previous_overview, None);
         assert_eq!(linter.pending_overview, None);
         assert!(!linter.region_has_events);
@@ -648,6 +689,101 @@ mod test {
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
         );
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn missing_links_before_next_overview_does_not_cascade() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://example.com/berlin/)\n",
+            "* 2024-10-26 | Paris, FR | [Rust Paris](https://example.com/paris/)\n",
+            "    * [**Valid Event**](https://example.com/events/valid/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        assert_eq!(linter.error_count, 1);
+        assert_eq!(event_count(&linter), 2);
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn missing_links_before_next_region_does_not_cascade() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://example.com/berlin/)\n",
+            "### Asia\n",
+            "* 2024-10-26 | Tokyo, JP | [Rust Tokyo](https://example.com/tokyo/)\n",
+            "    * [**Valid Event**](https://example.com/events/valid/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        assert_eq!(linter.error_count, 1);
+        assert_eq!(event_count(&linter), 2);
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn malformed_links_abandon_the_pending_event() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://example.com/berlin/)\n",
+            "    * [Event is not bold](https://example.com/events/malformed/)\n",
+            "* 2024-10-26 | Paris, FR | [Rust Paris](https://example.com/paris/)\n",
+            "    * [**Valid Event**](https://example.com/events/valid/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        assert_eq!(linter.error_count, 1);
+        assert_eq!(event_count(&linter), 2);
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn malformed_overview_and_orphaned_links_do_not_cascade() {
+        let extra = concat!(
+            "### Europe\n",
+            "* malformed event overview\n",
+            "    * [**Orphaned Event**](https://example.com/events/orphaned/)\n",
+            "* 2024-10-26 | Paris, FR | [Rust Paris](https://example.com/paris/)\n",
+            "    * [**Valid Event**](https://example.com/events/valid/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        assert_eq!(linter.error_count, 2);
+        assert_eq!(event_count(&linter), 2);
+        assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+    }
+
+    #[test]
+    fn newline_while_waiting_for_links_ends_the_region() {
+        let extra = concat!(
+            "### Europe\n",
+            "* 2024-10-25 | Berlin, DE | [Rust Berlin](https://example.com/berlin/)\n",
+            "\n",
+            "### Asia\n",
+            "* 2024-10-26 | Tokyo, JP | [Rust Tokyo](https://example.com/tokyo/)\n",
+            "    * [**Valid Event**](https://example.com/events/valid/)\n",
+            "\n",
+        );
+
+        let (result, linter) = lint_document(&build_event_section(Some(extra)));
+
+        assert_eq!(result, Err(LintError::ValidationFailed));
+        assert_eq!(linter.error_count, 1);
+        assert_eq!(event_count(&linter), 2);
         assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
     }
 
