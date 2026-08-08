@@ -1,0 +1,26 @@
+{
+  "Virtual": [
+    {
+      "name": "Updated Test Event",
+      "location": "Berlin, DE",
+      "date": "2024-10-25",
+      "url": "https://example.com/events/1/",
+      "virtual": true,
+      "organizer_name": "Test Group",
+      "organizer_url": "https://example.com/group/",
+      "hybrid": false
+    }
+  ],
+  "Europe": [
+    {
+      "name": "New European Event",
+      "location": "Paris, FR",
+      "date": "2024-10-26",
+      "url": "https://example.com/events/2/",
+      "virtual": false,
+      "organizer_name": "Europe Test Group",
+      "organizer_url": "https://example.com/europe-group/",
+      "hybrid": false
+    }
+  ]
+}
