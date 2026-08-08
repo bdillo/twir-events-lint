@@ -37,7 +37,30 @@ pub enum LintError {
         url: String,
         line: Box<Line<'static>>,
     },
-    LintFailed(String),
+    ValidationFailed,
+    ErrorLimitReached {
+        limit: u16,
+    },
+    UnexpectedEnd {
+        state: LinterState,
+    },
+    RecoveryFailed {
+        state: LinterState,
+    },
+    InternalInvariant(&'static str),
+}
+
+impl LintError {
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::ValidationFailed
+                | Self::ErrorLimitReached { .. }
+                | Self::UnexpectedEnd { .. }
+                | Self::RecoveryFailed { .. }
+                | Self::InternalInvariant(_)
+        )
+    }
 }
 
 impl std::fmt::Display for LintError {
@@ -65,7 +88,19 @@ impl std::fmt::Display for LintError {
             LintError::DuplicateEvent { name, url, line } => {
                 format!("duplicate event '{name}' ({url}) in region\n{line}")
             }
-            LintError::LintFailed(msg) => format!("lint failed: {msg}"),
+            LintError::ValidationFailed => "lint failed: see above logs for lint errors".to_owned(),
+            LintError::ErrorLimitReached { limit } => {
+                format!("lint failed: reached maximum error limit of {limit}")
+            }
+            LintError::UnexpectedEnd { state } => {
+                format!("lint failed: unexpected end while in state '{state}'")
+            }
+            LintError::RecoveryFailed { state } => {
+                format!("lint failed: cannot recover from state '{state}'")
+            }
+            LintError::InternalInvariant(message) => {
+                format!("lint failed: internal invariant violated: {message}")
+            }
             LintError::DateRangeNotSet => "no newsletter date range found".to_owned(),
         };
 
@@ -167,9 +202,9 @@ impl EventLinter {
                     error!("{}", e);
                     self.error_count += 1;
                     if self.error_count >= self.error_limit {
-                        return Err(LintError::LintFailed(
-                            "reached maximum error limit".to_owned(),
-                        ));
+                        return Err(LintError::ErrorLimitReached {
+                            limit: self.error_limit,
+                        });
                     }
                     // Parse errors don't change linter state - we skip the line
                 }
@@ -177,15 +212,11 @@ impl EventLinter {
         }
 
         if self.state != LinterState::ExpectingRegionHeader {
-            return Err(LintError::LintFailed(
-                "not in expected state when finished".to_owned(),
-            ));
+            return Err(LintError::UnexpectedEnd { state: self.state });
         }
 
         if self.error_count > 0 {
-            Err(LintError::LintFailed(
-                "see above logs for lint errors".to_owned(),
-            ))
+            Err(LintError::ValidationFailed)
         } else {
             Ok(())
         }
@@ -208,7 +239,7 @@ impl EventLinter {
 
         match lint_result {
             Ok(_) => Ok(()),
-            Err(e @ LintError::LintFailed(_)) => Err(e),
+            Err(e) if e.is_terminal() => Err(e),
             Err(e) => {
                 error!("{}", e);
 
@@ -217,12 +248,7 @@ impl EventLinter {
                 self.state = match self.state {
                     LinterState::ExpectingEventOverview => LinterState::ExpectingEventLinks,
                     LinterState::ExpectingEventLinks => LinterState::ExpectingEventOverview,
-                    _ => {
-                        return Err(LintError::LintFailed(format!(
-                            "in non-recoverable state {}, bailing",
-                            self.state
-                        )));
-                    }
+                    _ => return Err(LintError::RecoveryFailed { state: self.state }),
                 };
 
                 self.error_count += 1;
@@ -230,9 +256,9 @@ impl EventLinter {
                 // if we reach this many errors something has probably gone very wrong, so just exit early
                 // rather than overwhelming the output with more error messages
                 if self.error_count >= self.error_limit {
-                    Err(LintError::LintFailed(
-                        "reached our maximum error limit, bailing".to_owned(),
-                    ))
+                    Err(LintError::ErrorLimitReached {
+                        limit: self.error_limit,
+                    })
                 } else {
                     Ok(())
                 }
@@ -245,9 +271,9 @@ impl EventLinter {
         error!("{}", lint_error);
         self.error_count += 1;
         if self.error_count >= self.error_limit {
-            Err(LintError::LintFailed(
-                "reached our maximum error limit, bailing".to_owned(),
-            ))
+            Err(LintError::ErrorLimitReached {
+                limit: self.error_limit,
+            })
         } else {
             Ok(())
         }
@@ -393,10 +419,10 @@ impl EventLinter {
                 let overview = self
                     .pending_overview
                     .take()
-                    .ok_or_else(|| LintError::LintFailed("no overview set".to_owned()))?;
+                    .ok_or(LintError::InternalInvariant("no pending overview set"))?;
                 let region = self
                     .current_region
-                    .ok_or_else(|| LintError::LintFailed("no region set".to_owned()))?;
+                    .ok_or(LintError::InternalInvariant("no current region set"))?;
 
                 let listing = (overview, events.to_owned()).into();
                 self.events.add(listing, region);
@@ -502,12 +528,25 @@ mod test {
         linter.state = LinterState::ExpectingEventLinks;
         linter.current_region = Some(Region::Virtual);
 
-        assert!(matches!(
+        assert_eq!(
             linter.lint_line(&line),
-            Err(LintError::LintFailed(message)) if message == "no overview set"
-        ));
+            Err(LintError::InternalInvariant("no pending overview set"))
+        );
         assert!(!linter.region_has_events);
         assert!(linter.events().into_iter().next().is_none());
+    }
+
+    #[test]
+    fn incomplete_document_reports_its_final_state() {
+        let reader = Reader::new("## Upcoming Events\n", 0);
+        let mut linter = EventLinter::new(20);
+
+        assert_eq!(
+            linter.lint(reader),
+            Err(LintError::UnexpectedEnd {
+                state: LinterState::ExpectingEventsDateRange,
+            })
+        );
     }
 
     #[test]
@@ -524,7 +563,10 @@ mod test {
         let reader = Reader::new(section, line_num);
         let mut linter = EventLinter::new(1);
 
-        assert!(matches!(linter.lint(reader), Err(LintError::LintFailed(_))));
+        assert_eq!(
+            linter.lint(reader),
+            Err(LintError::ErrorLimitReached { limit: 1 })
+        );
         assert_eq!(linter.error_count, 1);
     }
 
@@ -549,7 +591,7 @@ mod test {
         let mut linter = EventLinter::new(20);
         let result = linter.lint(reader);
 
-        assert!(result.is_err(), "should fail due to out-of-range event");
+        assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
@@ -573,7 +615,7 @@ mod test {
         let mut linter = EventLinter::new(20);
         let result = linter.lint(reader);
 
-        assert!(result.is_err(), "should fail due to empty region");
+        assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
@@ -601,7 +643,7 @@ mod test {
         let mut linter = EventLinter::new(20);
         let result = linter.lint(reader);
 
-        assert!(result.is_err(), "should fail due to duplicate event");
+        assert_eq!(result, Err(LintError::ValidationFailed));
         assert_eq!(
             linter.error_count, 1,
             "should have exactly 1 error, not a cascade"
