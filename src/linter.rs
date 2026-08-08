@@ -122,9 +122,12 @@ pub struct EventLinter {
     end: Option<NaiveDate>,
     /// Region we are currently reading
     current_region: Option<Region>,
-    /// An event's date and location in our current region. Used to make sure we have our events properly sorted, also
-    /// stores the `EventOverview` until we reach the `EventLinks`
-    overview: Option<EventOverview>,
+    /// Previous event overview, used to validate ordering within the current region
+    previous_overview: Option<EventOverview>,
+    /// Current event overview waiting to be paired with its event links
+    pending_overview: Option<EventOverview>,
+    /// Whether the current region contains at least one complete event listing
+    region_has_events: bool,
     /// Current error count
     error_count: u16,
     /// Maximum error count before bailing
@@ -142,7 +145,9 @@ impl EventLinter {
             start: None,
             end: None,
             current_region: None,
-            overview: None,
+            previous_overview: None,
+            pending_overview: None,
+            region_has_events: false,
             error_count: 0,
             error_limit,
             events: EventsByRegion::new(),
@@ -326,7 +331,7 @@ impl EventLinter {
                 }
 
                 // if there is a previous event, compare to make sure our current one is later than the previous one
-                if let Some(prev_overview) = &self.overview
+                if let Some(prev_overview) = &self.previous_overview
                     && overview < prev_overview
                 {
                     self.record_error(LintError::EventOutOfOrder {
@@ -335,14 +340,15 @@ impl EventLinter {
                 }
 
                 // always transition — the line parsed fine even if validation failed
-                self.overview = Some(overview.clone());
+                self.previous_overview = Some(overview.clone());
+                self.pending_overview = Some(overview.clone());
                 self.state = LinterState::ExpectingEventLinks;
 
                 Ok(())
             }
             // If we hit a newline it should mean that we are done with a given regional section (Virtual, Asia, etc)
             ParsedLine::Newline => {
-                if self.overview.is_none()
+                if !self.region_has_events
                     && let Some(region) = self.current_region
                 {
                     self.record_error(LintError::EmptyRegion {
@@ -352,7 +358,9 @@ impl EventLinter {
                 }
                 self.state = LinterState::ExpectingRegionHeader;
                 // reset per-region state
-                self.overview = None;
+                self.previous_overview = None;
+                self.pending_overview = None;
+                self.region_has_events = false;
                 self.current_region = None;
                 self.seen_events.clear();
                 Ok(())
@@ -383,8 +391,8 @@ impl EventLinter {
                 // we have the event overview and links now, so we can return a full `EventListing` in case we want to
                 // do something with it outside of the linter
                 let overview = self
-                    .overview
-                    .clone()
+                    .pending_overview
+                    .take()
                     .ok_or_else(|| LintError::LintFailed("no overview set".to_owned()))?;
                 let region = self
                     .current_region
@@ -392,6 +400,7 @@ impl EventLinter {
 
                 let listing = (overview, events.to_owned()).into();
                 self.events.add(listing, region);
+                self.region_has_events = true;
 
                 Ok(())
             }
@@ -470,6 +479,35 @@ mod test {
         let reader = Reader::new(event_section, line_num);
         let mut linter = EventLinter::new(20);
         linter.lint(reader).unwrap();
+
+        let event_count = linter
+            .events()
+            .into_iter()
+            .map(|(_, events)| events.len())
+            .sum::<usize>();
+        assert_eq!(event_count, 1);
+        assert_eq!(linter.previous_overview, None);
+        assert_eq!(linter.pending_overview, None);
+        assert!(!linter.region_has_events);
+    }
+
+    #[test]
+    fn event_links_require_a_pending_overview() {
+        let mut reader = Reader::new(
+            "    * [**Event Without Overview**](https://example.com/event/)\n",
+            0,
+        );
+        let line = reader.next().unwrap().unwrap();
+        let mut linter = EventLinter::new(20);
+        linter.state = LinterState::ExpectingEventLinks;
+        linter.current_region = Some(Region::Virtual);
+
+        assert!(matches!(
+            linter.lint_line(&line),
+            Err(LintError::LintFailed(message)) if message == "no overview set"
+        ));
+        assert!(!linter.region_has_events);
+        assert!(linter.events().into_iter().next().is_none());
     }
 
     #[test]
@@ -541,6 +579,9 @@ mod test {
             "should have exactly 1 error, not a cascade"
         );
         assert_eq!(linter.state, LinterState::ExpectingRegionHeader);
+        assert_eq!(linter.previous_overview, None);
+        assert_eq!(linter.pending_overview, None);
+        assert!(!linter.region_has_events);
     }
 
     #[test]
