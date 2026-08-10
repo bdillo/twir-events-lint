@@ -1,3 +1,1 @@
-- look at interface for injecting new events
-- start to convert python meetup code to rust
 - look at luma

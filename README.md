@@ -43,7 +43,19 @@ export MEETUP_AUTHORIZED_MEMBER_ID="..."
 export MEETUP_CLIENT_KEY="..."
 
 cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
-  --meetup-groups meetup-automation/groups/rust-meetups.json
+  --meetup-groups groups/rust-meetups.json
+```
+
+Meetup group files are arrays of records with a `url` and an optional `event_format` of `virtual` or `hybrid`:
+
+```json
+[
+  { "url": "https://www.meetup.com/bcnrust" },
+  {
+    "url": "https://www.meetup.com/join-srug",
+    "event_format": "hybrid"
+  }
+]
 ```
 
 Add `--in-place` to atomically update the draft. Meetup collection uses the date range declared in the draft. `--meetup-groups` can be combined with `--new-events-file`; manually supplied events take precedence when event URLs overlap.

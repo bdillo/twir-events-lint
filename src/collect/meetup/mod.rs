@@ -14,7 +14,7 @@ use crate::events::{CollectedEvent, CollectedEventsByRegion, Region};
 use self::{
     api::{ApiEvent, ApiGroup, ApiVenue, MeetupClient},
     auth::MeetupCredentials,
-    config::{LocationOverride, MeetupGroup, read_groups},
+    config::{EventFormat, MeetupGroup, read_groups},
     location::Location,
 };
 
@@ -160,7 +160,7 @@ fn normalize_event(
     let date = parse_event_date(&date_time)?;
 
     let group_location = group_location(&group);
-    let venue = venue(venues, configured_group.location_override, &group)?;
+    let venue = venue(venues, configured_group.event_format, &group)?;
     let event_location = Location::new(venue.city, venue.state, venue.country);
     let location = if event_location.fields_present() > group_location.fields_present() {
         event_location
@@ -173,9 +173,9 @@ fn normalize_event(
     }
 
     let venue_is_virtual = venue.venue_type.as_deref() == Some("online");
-    let (is_virtual, is_hybrid) = match configured_group.location_override {
-        Some(LocationOverride::Virtual) => (true, false),
-        Some(LocationOverride::Hybrid) => (venue_is_virtual, true),
+    let (is_virtual, is_hybrid) = match configured_group.event_format {
+        Some(EventFormat::Virtual) => (true, false),
+        Some(EventFormat::Hybrid) => (venue_is_virtual, true),
         None => (venue_is_virtual, false),
     };
     let regions = if is_hybrid {
@@ -223,13 +223,13 @@ fn group_location(group: &ApiGroup) -> Location {
 
 fn venue(
     mut venues: Vec<ApiVenue>,
-    location_override: Option<LocationOverride>,
+    event_format: Option<EventFormat>,
     group: &ApiGroup,
 ) -> anyhow::Result<ApiVenue> {
     if !venues.is_empty() {
         return Ok(venues.remove(0));
     }
-    if location_override == Some(LocationOverride::Virtual) {
+    if event_format == Some(EventFormat::Virtual) {
         return Ok(ApiVenue {
             city: group.city.clone(),
             state: group.state.clone(),
@@ -258,11 +258,11 @@ fn required_text(value: Option<String>, field: &str) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
-    fn group(location_override: Option<LocationOverride>) -> MeetupGroup {
+    fn group(event_format: Option<EventFormat>) -> MeetupGroup {
         MeetupGroup {
             url: Url::parse("https://www.meetup.com/test-rust").unwrap(),
             url_name: "test-rust".to_owned(),
-            location_override,
+            event_format,
         }
     }
 
@@ -298,21 +298,18 @@ mod tests {
 
     #[test]
     fn hybrid_event_is_added_to_virtual_and_geographic_regions() {
-        let event = normalize_event(
-            api_event("physical"),
-            &group(Some(LocationOverride::Hybrid)),
-        )
-        .unwrap();
+        let event =
+            normalize_event(api_event("physical"), &group(Some(EventFormat::Hybrid))).unwrap();
 
         assert!(event.event.is_hybrid);
         assert_eq!(event.regions, vec![Region::Virtual, Region::Europe]);
     }
 
     #[test]
-    fn virtual_override_supplies_missing_venue() {
+    fn virtual_event_format_supplies_missing_venue() {
         let mut event = api_event("online");
         event.venues.clear();
-        let event = normalize_event(event, &group(Some(LocationOverride::Virtual))).unwrap();
+        let event = normalize_event(event, &group(Some(EventFormat::Virtual))).unwrap();
 
         assert!(event.event.is_virtual);
         assert_eq!(event.event.location, "London, UK");

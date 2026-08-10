@@ -1,0 +1,353 @@
+[
+    {
+        "url": "https://www.meetup.com/bcnrust"
+    },
+    {
+        "url": "https://www.meetup.com/belgium-rust-user-group"
+    },
+    {
+        "url": "https://www.meetup.com/belgrade-rust-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/bevy-game-development"
+    },
+    {
+        "url": "https://www.meetup.com/bostonrust"
+    },
+    {
+        "url": "https://www.meetup.com/boulder-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/bratislava-rust-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/buffalo-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/cambridge-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/charlottesville-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/chicago-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/christchurch-rustlang-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/columbus-rs"
+    },
+    {
+        "url": "https://www.meetup.com/copenhagen-rust-community"
+    },
+    {
+        "url": "https://www.meetup.com/dallasrust"
+    },
+    {
+        "url": "https://www.meetup.com/desert-rustaceans"
+    },
+    {
+        "url": "https://www.meetup.com/detroitrust"
+    },
+    {
+        "url": "https://www.meetup.com/dutch-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/indyrs"
+    },
+    {
+        "url": "https://www.meetup.com/johannesburg-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/join-srug",
+        "event_format": "hybrid"
+    },
+    {
+        "url": "https://www.meetup.com/london-rust-project-group"
+    },
+    {
+        "url": "https://www.meetup.com/madrust"
+    },
+    {
+        "url": "https://www.meetup.com/meetup-group-zgphbyet"
+    },
+    {
+        "url": "https://www.meetup.com/minneapolis-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/montpellier-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/music-city-rust-developers"
+    },
+    {
+        "url": "https://www.meetup.com/mv-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/oc-rust"
+    },
+    {
+        "url": "https://www.meetup.com/oxford-rust-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/paessler-rust-camp-2024"
+    },
+    {
+        "url": "https://www.meetup.com/pdxrust"
+    },
+    {
+        "url": "https://www.meetup.com/perth-rust-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/reading-rust-workshop"
+    },
+    {
+        "url": "https://www.meetup.com/rust-aarhus"
+    },
+    {
+        "url": "https://www.meetup.com/rust-aarhus-organizers"
+    },
+    {
+        "url": "https://www.meetup.com/rust-amsterdam"
+    },
+    {
+        "url": "https://www.meetup.com/rust-amsterdam-group"
+    },
+    {
+        "url": "https://www.meetup.com/rust-and-c-plus-plus-in-cardiff"
+    },
+    {
+        "url": "https://www.meetup.com/rust-argentina"
+    },
+    {
+        "url": "https://www.meetup.com/rust-atl"
+    },
+    {
+        "url": "https://www.meetup.com/rust-atx"
+    },
+    {
+        "url": "https://www.meetup.com/rust-basel"
+    },
+    {
+        "url": "https://www.meetup.com/rust-bay-area"
+    },
+    {
+        "url": "https://www.meetup.com/rust-berlin"
+    },
+    {
+        "url": "https://www.meetup.com/rust-bern"
+    },
+    {
+        "url": "https://www.meetup.com/rust-boulder-denver"
+    },
+    {
+        "url": "https://www.meetup.com/rust-breakfast-learn"
+    },
+    {
+        "url": "https://www.meetup.com/rust-brisbane"
+    },
+    {
+        "url": "https://www.meetup.com/rust-canberra"
+    },
+    {
+        "url": "https://www.meetup.com/rust-cologne-bonn"
+    },
+    {
+        "url": "https://www.meetup.com/rust-czech-republic"
+    },
+    {
+        "url": "https://www.meetup.com/rust-dortmund"
+    },
+    {
+        "url": "https://www.meetup.com/rust-dublin"
+    },
+    {
+        "url": "https://www.meetup.com/rust-edi"
+    },
+    {
+        "url": "https://www.meetup.com/rust-frankfurt"
+    },
+    {
+        "url": "https://www.meetup.com/rust-gdansk"
+    },
+    {
+        "url": "https://www.meetup.com/rust-getting-started"
+    },
+    {
+        "url": "https://www.meetup.com/rust-hack-learn-karlsruhe"
+    },
+    {
+        "url": "https://www.meetup.com/rust-hyderabad"
+    },
+    {
+        "url": "https://www.meetup.com/rust-kw"
+    },
+    {
+        "url": "https://www.meetup.com/rust-language-milano"
+    },
+    {
+        "url": "https://www.meetup.com/rust-linz"
+    },
+    {
+        "url": "https://www.meetup.com/rust-london-user-group"
+    },
+    {
+        "url": "https://www.meetup.com/rust-los-angeles"
+    },
+    {
+        "url": "https://www.meetup.com/rust-lyon"
+    },
+    {
+        "url": "https://www.meetup.com/rust-manchester"
+    },
+    {
+        "url": "https://www.meetup.com/rust-medellin"
+    },
+    {
+        "url": "https://www.meetup.com/rust-meetup-hamburg"
+    },
+    {
+        "url": "https://www.meetup.com/rust-melbourne"
+    },
+    {
+        "url": "https://www.meetup.com/rust-modern-systems-programming-in-leipzig"
+    },
+    {
+        "url": "https://www.meetup.com/rust-montreal"
+    },
+    {
+        "url": "https://www.meetup.com/rust-moravia"
+    },
+    {
+        "url": "https://www.meetup.com/rust-munich"
+    },
+    {
+        "url": "https://www.meetup.com/rust-mx"
+    },
+    {
+        "url": "https://www.meetup.com/rust-nederland"
+    },
+    {
+        "url": "https://www.meetup.com/rust-noris",
+        "event_format": "virtual"
+    },
+    {
+        "url": "https://www.meetup.com/rust-nyc"
+    },
+    {
+        "url": "https://www.meetup.com/rust-oslo"
+    },
+    {
+        "url": "https://www.meetup.com/rust-paris"
+    },
+    {
+        "url": "https://www.meetup.com/rust-prague"
+    },
+    {
+        "url": "https://www.meetup.com/rust-pune"
+    },
+    {
+        "url": "https://www.meetup.com/rust-rhein-main"
+    },
+    {
+        "url": "https://www.meetup.com/rust-roma"
+    },
+    {
+        "url": "https://www.meetup.com/rust-sao-paulo-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/rust-seoul-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/rust-singapore"
+    },
+    {
+        "url": "https://www.meetup.com/rust-study-group"
+    },
+    {
+        "url": "https://www.meetup.com/rust-sydney"
+    },
+    {
+        "url": "https://www.meetup.com/rust-tlv"
+    },
+    {
+        "url": "https://www.meetup.com/rust-toronto"
+    },
+    {
+        "url": "https://www.meetup.com/rust-trondheim"
+    },
+    {
+        "url": "https://www.meetup.com/rust-uruguay"
+    },
+    {
+        "url": "https://www.meetup.com/rust-vienna"
+    },
+    {
+        "url": "https://www.meetup.com/rust-warsaw"
+    },
+    {
+        "url": "https://www.meetup.com/rust-wellington"
+    },
+    {
+        "url": "https://www.meetup.com/rust-wroclaw"
+    },
+    {
+        "url": "https://www.meetup.com/rust-zurich"
+    },
+    {
+        "url": "https://www.meetup.com/rustcologne"
+    },
+    {
+        "url": "https://www.meetup.com/rustdc"
+    },
+    {
+        "url": "https://www.meetup.com/rustdelhi"
+    },
+    {
+        "url": "https://www.meetup.com/rustgbg"
+    },
+    {
+        "url": "https://www.meetup.com/rustox"
+    },
+    {
+        "url": "https://www.meetup.com/ruststhlm"
+    },
+    {
+        "url": "https://www.meetup.com/san-diego-rust"
+    },
+    {
+        "url": "https://www.meetup.com/san-francisco-rust-study-group"
+    },
+    {
+        "url": "https://www.meetup.com/spokane-rust"
+    },
+    {
+        "url": "https://www.meetup.com/stl-rust"
+    },
+    {
+        "url": "https://www.meetup.com/stockholm-rust"
+    },
+    {
+        "url": "https://www.meetup.com/tokyo-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/triangle-rust"
+    },
+    {
+        "url": "https://www.meetup.com/utah-rust"
+    },
+    {
+        "url": "https://www.meetup.com/vancouver-rust",
+        "event_format": "hybrid"
+    },
+    {
+        "url": "https://www.meetup.com/wellington-rust-meetup"
+    },
+    {
+        "url": "https://www.meetup.com/women-in-rust"
+    },
+    {
+        "url": "https://www.meetup.com/zagreb-rust-meetup"
+    }
+]
