@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
 use chrono::NaiveDate;
-use log::{debug, error};
+use log::debug;
 
 use crate::{
     edit::{EditError, SourceSpan, TextEdit},
     events::{EventDate, EventOverview, EventsByRegion, Region},
-    reader::{Line, ParsedLine, Reader},
+    reader::{Line, LineError, ParsedLine, Reader},
 };
 
 // TODO: check meetup urls don't have that tracker in them
@@ -59,6 +59,21 @@ fn source_slice<'a>(document: &'a str, span: &SourceSpan) -> Result<&'a str, Edi
         return Err(EditError::NotCharacterBoundary(span.clone()));
     }
     Ok(&document[span.start()..span.end()])
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LintDiagnostic {
+    Validation(LintError),
+    Parse(LineError),
+}
+
+impl std::fmt::Display for LintDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Validation(error) => error.fmt(f),
+            Self::Parse(error) => error.fmt(f),
+        }
+    }
 }
 
 impl LintError {
@@ -203,6 +218,7 @@ pub struct EventLinter {
     region_structurally_complete: bool,
     /// Current error count
     error_count: u16,
+    diagnostics: Vec<LintDiagnostic>,
     /// Maximum error count before bailing
     error_limit: u16,
     /// Collected `EventListing`s by region, in case we want to use them outside the linter
@@ -234,6 +250,7 @@ impl EventLinter {
             region_blocks: Vec::new(),
             region_structurally_complete: true,
             error_count: 0,
+            diagnostics: Vec::new(),
             error_limit,
             events: EventsByRegion::new(),
             seen_events: HashSet::new(),
@@ -246,6 +263,10 @@ impl EventLinter {
 
     pub fn events(&self) -> &EventsByRegion {
         &self.events
+    }
+
+    pub fn diagnostics(&self) -> &[LintDiagnostic] {
+        &self.diagnostics
     }
 
     pub fn safe_edits(&self, document: &str) -> Result<Vec<TextEdit>, EditError> {
@@ -277,8 +298,8 @@ impl EventLinter {
         for line in reader {
             match line {
                 Ok(line) => self.lint_line(&line)?,
-                Err(e) => {
-                    error!("{}", e);
+                Err(error) => {
+                    self.diagnostics.push(LintDiagnostic::Parse(error));
                     self.error_count += 1;
                     if self.error_count >= self.error_limit {
                         return Err(LintError::ErrorLimitReached {
@@ -436,9 +457,10 @@ impl EventLinter {
         self.seen_events.clear();
     }
 
-    /// Record a validation error. Logs it, increments the count, and returns Err only if the limit is hit.
+    /// Record a validation error and return Err only if the limit is hit.
     fn record_error(&mut self, lint_error: LintError) -> Result<(), LintError> {
-        error!("{}", lint_error);
+        self.diagnostics
+            .push(LintDiagnostic::Validation(lint_error));
         self.error_count += 1;
         if self.error_count >= self.error_limit {
             Err(LintError::ErrorLimitReached {

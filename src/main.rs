@@ -21,6 +21,12 @@ fn lint_document(
     Ok((linter, result))
 }
 
+fn log_diagnostics(linter: &EventLinter) {
+    for diagnostic in linter.diagnostics() {
+        error!("{diagnostic}");
+    }
+}
+
 fn read_collected_events(path: &Path) -> anyhow::Result<EventsByRegion> {
     info!("reading new events file '{}'", path.display());
     let content = fs::read_to_string(path)
@@ -85,11 +91,13 @@ fn main() -> anyhow::Result<()> {
 
     if let Err(error) = lint_result {
         if !args.fix() {
+            log_diagnostics(&linter);
             error!("{}", error);
             std::process::exit(1);
         }
         let edits = linter.safe_edits(&updated)?;
         if edits.is_empty() {
+            log_diagnostics(&linter);
             error!("{}", error);
             std::process::exit(1);
         }
@@ -99,6 +107,7 @@ fn main() -> anyhow::Result<()> {
         let linted = lint_document(&updated, args.error_limit())?;
         linter = linted.0;
         if let Err(error) = linted.1 {
+            log_diagnostics(&linter);
             error!("{}", error);
             std::process::exit(1);
         }
@@ -130,8 +139,9 @@ fn main() -> anyhow::Result<()> {
             &updated,
             &[TextEdit::new(listings_span, merged.to_string())],
         )?;
-        let (_, candidate_result) = lint_document(&candidate, args.error_limit())?;
+        let (candidate_linter, candidate_result) = lint_document(&candidate, args.error_limit())?;
         if let Err(error) = candidate_result {
+            log_diagnostics(&candidate_linter);
             error!("merged document is invalid: {error}");
             std::process::exit(1);
         }

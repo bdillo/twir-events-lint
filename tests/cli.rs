@@ -78,6 +78,7 @@ fn fix_removes_out_of_range_event_and_empty_region() {
     assert!(!fixed.contains("Old Event"));
     assert!(!fixed.contains("### Europe"));
     assert!(fixed.contains("Test Event"));
+    assert!(!output_text(&output.stderr).contains(" ERROR "));
 }
 
 #[test]
@@ -106,6 +107,24 @@ fn fix_removes_and_reorders_events_idempotently() {
         "    * [**Earlier Event**](https://example.com/events/earlier/) + [**Workshop**](https://example.com/events/workshop/)"
     ));
     assert_eq!(fixed_again, fixed);
+    assert!(!output_text(&first_output.stderr).contains(" ERROR "));
+}
+
+#[test]
+fn partially_fixable_draft_reports_only_remaining_errors() {
+    let draft = temporary_copy("partially-fixable.md");
+    let original = std::fs::read_to_string(&draft).expect("failed to read original draft");
+
+    let output = run(&["--draft", draft.to_str().unwrap(), "--fix"]);
+    let unchanged = std::fs::read_to_string(&draft).expect("failed to reread draft");
+    std::fs::remove_file(&draft).expect("failed to remove temporary draft");
+    let stderr = output_text(&output.stderr);
+
+    assert!(!output.status.success());
+    assert_eq!(unchanged, original);
+    assert!(stderr.contains("duplicate event 'Duplicate Event'"));
+    assert!(!stderr.contains("does not fall within newsletter date range"));
+    assert!(!stderr.contains("Old Event"));
 }
 
 #[test]
