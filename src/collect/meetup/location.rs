@@ -33,9 +33,14 @@ impl Location {
     }
 
     pub fn display_name(&self) -> String {
-        [&self.city, &self.state, &self.country]
+        let state = if self.country.as_deref() == Some("US") {
+            self.state.as_deref()
+        } else {
+            None
+        };
+        [self.city.as_deref(), state, self.country.as_deref()]
             .into_iter()
-            .filter_map(|field| field.as_deref())
+            .flatten()
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -99,10 +104,33 @@ mod tests {
     }
 
     #[test]
-    fn joins_only_present_location_fields() {
-        let location = Location::new(None, Some("ca".to_owned()), Some("us".to_owned()));
+    fn includes_state_for_us_locations() {
+        let location = Location::new(
+            Some("Indianapolis".to_owned()),
+            Some("in".to_owned()),
+            Some("us".to_owned()),
+        );
 
-        assert_eq!(location.display_name(), "CA, US");
+        assert_eq!(location.display_name(), "Indianapolis, IN, US");
         assert_eq!(location.region(), Some(Region::NorthAmerica));
+    }
+
+    #[test]
+    fn omits_state_for_non_us_locations() {
+        let leipzig = Location::new(
+            Some("Leipzig".to_owned()),
+            Some("SN".to_owned()),
+            Some("DE".to_owned()),
+        );
+        let montreal = Location::new(
+            Some("Montreal".to_owned()),
+            Some("QC".to_owned()),
+            Some("CA".to_owned()),
+        );
+
+        assert_eq!(leipzig.display_name(), "Leipzig, DE");
+        assert_eq!(montreal.display_name(), "Montreal, CA");
+        assert_eq!(leipzig.fields_present(), 3);
+        assert_eq!(montreal.fields_present(), 3);
     }
 }

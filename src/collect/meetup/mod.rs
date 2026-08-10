@@ -319,6 +319,22 @@ mod tests {
     }
 
     #[test]
+    fn non_us_state_still_helps_select_the_event_venue() {
+        let mut event = api_event("physical");
+        event.venues[0] = ApiVenue {
+            city: Some("Montreal".to_owned()),
+            state: Some("QC".to_owned()),
+            country: Some("CA".to_owned()),
+            venue_type: Some("physical".to_owned()),
+        };
+
+        let event = normalize_event(event, &group(None)).unwrap();
+
+        assert_eq!(event.event.location, "Montreal, CA");
+        assert_eq!(event.regions, vec![Region::NorthAmerica]);
+    }
+
+    #[test]
     fn unknown_country_is_rejected_for_physical_event() {
         let mut event = api_event("physical");
         event.venues[0].country = Some("ZZ".to_owned());
