@@ -92,6 +92,12 @@ pub fn collect(
 
     let mut normalized = Vec::new();
     for (group, event) in raw_events {
+        if !title_matches_filter(
+            event.title.as_deref(),
+            group.required_title_token.as_deref(),
+        ) {
+            continue;
+        }
         match normalize_event(event, &group) {
             Ok(event) if !date_in_range(event.date, range_start, range_end) => {
                 warnings.push(format!(
@@ -105,6 +111,19 @@ pub fn collect(
     }
     let events = group_events(normalized, &mut warnings);
     Ok(MeetupCollection { events, warnings })
+}
+
+fn title_matches_filter(title: Option<&str>, required_token: Option<&str>) -> bool {
+    let Some(required_token) = required_token else {
+        return true;
+    };
+    let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
+        return true;
+    };
+
+    title
+        .split(|character: char| !character.is_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case(required_token))
 }
 
 fn date_in_range(date: NaiveDate, start: NaiveDate, end: NaiveDate) -> bool {
@@ -263,6 +282,7 @@ mod tests {
             url: Url::parse("https://www.meetup.com/test-rust").unwrap(),
             url_name: "test-rust".to_owned(),
             event_format,
+            required_title_token: None,
         }
     }
 
@@ -338,6 +358,40 @@ mod tests {
         event.group.as_mut().unwrap().country = Some("ZZ".to_owned());
 
         assert!(normalize_event(event, &group(None)).is_err());
+    }
+
+    #[test]
+    fn required_title_token_matches_case_insensitive_tokens() {
+        for title in [
+            "Rust Meetup",
+            "Learning RUST",
+            "C++/Rust interoperability",
+            "rust-lang community night",
+            "Rust's ownership model",
+        ] {
+            assert!(title_matches_filter(Some(title), Some("rust")), "{title}");
+        }
+
+        for title in [
+            "Trust",
+            "Crust",
+            "RustConf",
+            "Rustaceans",
+            "rustc internals",
+        ] {
+            assert!(!title_matches_filter(Some(title), Some("rust")), "{title}");
+        }
+    }
+
+    #[test]
+    fn missing_titles_reach_normalization_for_diagnostics() {
+        assert!(title_matches_filter(None, Some("rust")));
+        assert!(title_matches_filter(Some("  "), Some("rust")));
+    }
+
+    #[test]
+    fn unfiltered_groups_include_every_title() {
+        assert!(title_matches_filter(Some("C++ Meetup"), None));
     }
 
     #[test]

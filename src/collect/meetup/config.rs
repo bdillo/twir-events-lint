@@ -16,6 +16,7 @@ pub struct MeetupGroup {
     pub url: Url,
     pub url_name: String,
     pub event_format: Option<EventFormat>,
+    pub required_title_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,7 @@ pub struct MeetupGroup {
 struct ConfiguredGroup {
     url: String,
     event_format: Option<EventFormat>,
+    required_title_token: Option<String>,
 }
 
 pub fn read_groups(path: &Path) -> anyhow::Result<Vec<MeetupGroup>> {
@@ -34,7 +36,11 @@ pub fn read_groups(path: &Path) -> anyhow::Result<Vec<MeetupGroup>> {
     let mut names = HashSet::new();
     let mut groups = Vec::with_capacity(configured.len());
     for configured_group in configured {
-        let group = parse_group(&configured_group.url, configured_group.event_format)?;
+        let group = parse_group(
+            &configured_group.url,
+            configured_group.event_format,
+            configured_group.required_title_token,
+        )?;
         if !names.insert(group.url_name.clone()) {
             bail!("duplicate Meetup group name '{}'", group.url_name);
         }
@@ -44,11 +50,30 @@ pub fn read_groups(path: &Path) -> anyhow::Result<Vec<MeetupGroup>> {
     Ok(groups)
 }
 
-fn parse_group(url: &str, event_format: Option<EventFormat>) -> anyhow::Result<MeetupGroup> {
+fn parse_group(
+    url: &str,
+    event_format: Option<EventFormat>,
+    required_title_token: Option<String>,
+) -> anyhow::Result<MeetupGroup> {
     let parsed = Url::parse(url).with_context(|| format!("invalid Meetup group URL '{url}'"))?;
     if parsed.host_str() != Some("www.meetup.com") {
         bail!("invalid Meetup group host in '{url}', expected www.meetup.com");
     }
+    let required_title_token = match required_title_token {
+        Some(token) => {
+            let token = token.trim().to_lowercase();
+            if token.is_empty()
+                || !token
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+            {
+                bail!("invalid required title token for Meetup group '{url}'");
+            }
+            Some(token)
+        }
+        None => None,
+    };
+
     let url_name = parsed
         .path_segments()
         .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
@@ -60,6 +85,7 @@ fn parse_group(url: &str, event_format: Option<EventFormat>) -> anyhow::Result<M
         url: parsed,
         url_name,
         event_format,
+        required_title_token,
     })
 }
 
@@ -72,6 +98,7 @@ mod tests {
         let group = parse_group(
             "https://www.meetup.com/rust-noris/events/",
             Some(EventFormat::Virtual),
+            None,
         )
         .unwrap();
 
@@ -81,7 +108,7 @@ mod tests {
 
     #[test]
     fn rejects_non_meetup_hosts() {
-        assert!(parse_group("https://example.com/rust", None).is_err());
+        assert!(parse_group("https://example.com/rust", None, None).is_err());
     }
 
     #[test]
@@ -90,16 +117,28 @@ mod tests {
 
         let groups = read_groups(&path).unwrap();
 
-        assert_eq!(groups.len(), 116);
+        assert_eq!(groups.len(), 142);
         assert!(groups.iter().any(|group| {
             group.url_name == "vancouver-rust" && group.event_format == Some(EventFormat::Hybrid)
         }));
+        assert_eq!(
+            groups
+                .iter()
+                .filter(|group| group.required_title_token.is_some())
+                .count(),
+            26
+        );
     }
 
     #[test]
-    fn reads_maybe_group_configuration() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("groups/maybe-rust-meetups.json");
-
-        assert_eq!(read_groups(&path).unwrap().len(), 26);
+    fn rejects_invalid_required_title_tokens() {
+        assert!(
+            parse_group(
+                "https://www.meetup.com/test-rust",
+                None,
+                Some("rust lang".to_owned())
+            )
+            .is_err()
+        );
     }
 }

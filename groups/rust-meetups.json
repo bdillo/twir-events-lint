@@ -1,5 +1,9 @@
 [
     {
+        "url": "https://www.meetup.com/barcelona-free-software",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/bcnrust"
     },
     {
@@ -9,10 +13,30 @@
         "url": "https://www.meetup.com/belgrade-rust-meetup-group"
     },
     {
+        "url": "https://www.meetup.com/bellinghamcodes",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/bergen-html-css-meetup-group",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/bevy-game-development"
     },
     {
+        "url": "https://www.meetup.com/bitdevsla",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/blockchaincenter",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/bostonrust"
+    },
+    {
+        "url": "https://www.meetup.com/boulder-elixir",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/boulder-rust-meetup"
@@ -36,13 +60,29 @@
         "url": "https://www.meetup.com/christchurch-rustlang-meetup-group"
     },
     {
+        "url": "https://www.meetup.com/code-mavens",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/coderrange-endless-programming-languages",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/columbus-rs"
+    },
+    {
+        "url": "https://www.meetup.com/conf42",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/copenhagen-rust-community"
     },
     {
         "url": "https://www.meetup.com/dallasrust"
+    },
+    {
+        "url": "https://www.meetup.com/data-ai-online",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/desert-rustaceans"
@@ -54,7 +94,27 @@
         "url": "https://www.meetup.com/dutch-rust-meetup"
     },
     {
+        "url": "https://www.meetup.com/func-prog-sweden",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/hackerdojo",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/hackschool-rhein-neckar",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/houston-functional-programming-users-group",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/indyrs"
+    },
+    {
+        "url": "https://www.meetup.com/jersey-city-classy-curious-coders-club-cooperative",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/johannesburg-rust-meetup"
@@ -98,6 +158,10 @@
     },
     {
         "url": "https://www.meetup.com/perth-rust-meetup-group"
+    },
+    {
+        "url": "https://www.meetup.com/pydelhi",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/reading-rust-workshop"
@@ -323,10 +387,30 @@
         "url": "https://www.meetup.com/spokane-rust"
     },
     {
+        "url": "https://www.meetup.com/stacja-it-krakow",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/stacja-it-trojmiasto",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/stacja-it-wroclaw",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/stl-rust"
     },
     {
         "url": "https://www.meetup.com/stockholm-rust"
+    },
+    {
+        "url": "https://www.meetup.com/techmeetupostrava",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/the-karlsruhe-functional-programmers-meetup-group",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/tokyo-rust-meetup"
@@ -335,11 +419,31 @@
         "url": "https://www.meetup.com/triangle-rust"
     },
     {
+        "url": "https://www.meetup.com/ucsc-extension-community",
+        "required_title_token": "rust"
+    },
+    {
         "url": "https://www.meetup.com/utah-rust"
+    },
+    {
+        "url": "https://www.meetup.com/vancouver-postgres",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/vancouver-rust",
         "event_format": "hybrid"
+    },
+    {
+        "url": "https://www.meetup.com/vilnius-rust-go-meetup-group",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/wasm-rust-meetup",
+        "required_title_token": "rust"
+    },
+    {
+        "url": "https://www.meetup.com/wearedevelopers-community",
+        "required_title_token": "rust"
     },
     {
         "url": "https://www.meetup.com/wellington-rust-meetup"

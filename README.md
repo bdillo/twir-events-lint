@@ -46,7 +46,7 @@ cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md 
   --meetup-groups groups/rust-meetups.json
 ```
 
-Meetup group files are arrays of records with a `url` and an optional `event_format` of `virtual` or `hybrid`:
+Meetup group files are arrays of records with a `url`, an optional `event_format` of `virtual` or `hybrid`, and an optional `required_title_token`:
 
 ```json
 [
@@ -54,10 +54,14 @@ Meetup group files are arrays of records with a `url` and an optional `event_for
   {
     "url": "https://www.meetup.com/join-srug",
     "event_format": "hybrid"
+  },
+  {
+    "url": "https://www.meetup.com/hackerdojo",
+    "required_title_token": "rust"
   }
 ]
 ```
 
-Add `--in-place` to atomically update the draft. Meetup collection uses the date range declared in the draft. `--meetup-groups` can be combined with `--new-events-file`; manually supplied events take precedence when event URLs overlap.
+Required title tokens are matched case-insensitively after splitting titles on non-alphanumeric characters. Add `--in-place` to atomically update the draft. Meetup collection uses the date range declared in the draft. `--meetup-groups` can be combined with `--new-events-file`; manually supplied events take precedence when event URLs overlap.
 
 If the OAuth client has multiple signing keys or requires explicit key selection, also set `MEETUP_SIGNING_KEY_ID`; it is otherwise optional for compatibility with existing Meetup clients.
