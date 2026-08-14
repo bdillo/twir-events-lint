@@ -259,6 +259,25 @@ fn invalid_merged_document_is_not_written() {
 }
 
 #[test]
+fn empty_event_sources_are_rejected_without_network_access() {
+    let draft = fixture("valid.md");
+    let sources = fixture("empty-event-sources.json");
+    let output = run(&[
+        "--draft",
+        draft.to_str().unwrap(),
+        "--event-sources",
+        sources.to_str().unwrap(),
+    ]);
+    let stderr = output_text(&output.stderr);
+
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("no event sources configured"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn malformed_events_json_reports_the_file() {
     let draft = temporary_copy("valid.md");
     let original = std::fs::read_to_string(&draft).unwrap();

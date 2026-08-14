@@ -4,7 +4,7 @@ use log::{error, info, warn};
 use std::{fs, path::Path};
 use twir_events_lint::{
     args::Args,
-    collect::meetup,
+    collect,
     edit::{TextEdit, apply_edits, replace_file},
     events::{CollectedEventsByRegion, EventsByRegion},
     linter::{EventLinter, LintError},
@@ -50,13 +50,13 @@ fn collect_incoming_events(
     let mut incoming = EventsByRegion::new();
     let mut has_source = false;
 
-    if let Some(groups_path) = args.meetup_groups() {
-        info!("collecting Meetup events using '{}'", groups_path.display());
-        let collection = meetup::collect(groups_path, range_start, range_end)?;
+    if let Some(sources_path) = args.event_sources() {
+        info!("collecting events using '{}'", sources_path.display());
+        let collection = collect::collect(sources_path, range_start, range_end)?;
         for warning in collection.warnings {
             warn!("{warning}");
         }
-        incoming = incoming.merge(&EventsByRegion::try_from(collection.events)?);
+        incoming = incoming.merge(&collection.events);
         has_source = true;
     }
 
@@ -79,8 +79,8 @@ fn main() -> anyhow::Result<()> {
 
     simple_logger::init_with_level(log_level).expect("failed to init logger");
 
-    if args.in_place() && args.new_events_file().is_none() && args.meetup_groups().is_none() {
-        anyhow::bail!("--in-place requires --new-events-file or --meetup-groups");
+    if args.in_place() && args.new_events_file().is_none() && args.event_sources().is_none() {
+        anyhow::bail!("--in-place requires --new-events-file or --event-sources");
     }
 
     info!("reading file '{}'", args.draft().display());

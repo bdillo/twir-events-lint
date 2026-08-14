@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 chrono = "0.4.38"
+chrono-tz = "0.10.4"
 clap = { version = "4.5.20", features = ["derive"] }
+icalendar = { version = "0.17.13", default-features = false, features = ["parser"] }
 jsonwebtoken = "9.3.1"
 log = "0.4.22"
 nom = "8.0.0"

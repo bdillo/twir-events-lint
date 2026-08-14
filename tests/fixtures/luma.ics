@@ -1,0 +1,43 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Luma//Rust Girona//EN
+X-WR-CALNAME:Rust Girona
+BEGIN:VEVENT
+DTSTART:20261020T233000Z
+DTEND:20261021T010000Z
+UID:physical@events.lu.ma
+SUMMARY:Physical Rust Event
+DESCRIPTION:Get up-to-date information at: https://luma.com/phys
+ ical\n\nAddress:\nGirona\nSpain
+LOCATION:Carrer dels Mercaders, 5, 17004 Girona, Spain
+GEO:41.983698;2.824546
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261022T160000Z
+DTEND:20261022T170000Z
+UID:virtual@events.lu.ma
+SUMMARY:Virtual Rust Event
+DESCRIPTION:Get up-to-date information at: https://luma.com/virtual
+LOCATION:https://luma.com/event/evt-virtual
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261023T160000Z
+DTEND:20261023T170000Z
+UID:outside@events.lu.ma
+SUMMARY:Outside Range Event
+DESCRIPTION:Get up-to-date information at: https://luma.com/outside
+LOCATION:https://luma.com/event/evt-outside
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261021T160000Z
+DTEND:20261021T170000Z
+UID:cancelled@events.lu.ma
+SUMMARY:Cancelled Event
+DESCRIPTION:Get up-to-date information at: https://luma.com/cancelled
+LOCATION:https://luma.com/event/evt-cancelled
+STATUS:CANCELLED
+END:VEVENT
+END:VCALENDAR

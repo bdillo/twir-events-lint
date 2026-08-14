@@ -10,9 +10,9 @@ pub struct Args {
     /// File containing new TWIR events
     #[arg(short, long)]
     new_events_file: Option<PathBuf>,
-    /// File containing configured Meetup groups to fetch
+    /// File containing configured event sources to fetch
     #[arg(long)]
-    meetup_groups: Option<PathBuf>,
+    event_sources: Option<PathBuf>,
     /// Write merged new events back to the draft
     #[arg(long, default_value_t = false)]
     in_place: bool,
@@ -36,8 +36,8 @@ impl Args {
         &self.new_events_file
     }
 
-    pub fn meetup_groups(&self) -> &Option<PathBuf> {
-        &self.meetup_groups
+    pub fn event_sources(&self) -> &Option<PathBuf> {
+        &self.event_sources
     }
 
     pub fn in_place(&self) -> bool {

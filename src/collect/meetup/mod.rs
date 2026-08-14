@@ -1,9 +1,9 @@
 mod api;
 mod auth;
-mod config;
+pub(super) mod config;
 mod location;
 
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
 
 use anyhow::{Context, bail};
 use chrono::NaiveDate;
@@ -14,7 +14,7 @@ use crate::events::{CollectedEvent, CollectedEventsByRegion, Region};
 use self::{
     api::{ApiEvent, ApiGroup, ApiVenue, MeetupClient},
     auth::MeetupCredentials,
-    config::{EventFormat, MeetupGroup, read_groups},
+    config::{EventFormat, MeetupGroup},
     location::Location,
 };
 
@@ -32,12 +32,11 @@ struct NormalizedEvent {
     regions: Vec<Region>,
 }
 
-pub fn collect(
-    groups_path: &Path,
+pub(crate) fn collect(
+    groups: Vec<MeetupGroup>,
     range_start: NaiveDate,
     range_end: NaiveDate,
 ) -> anyhow::Result<MeetupCollection> {
-    let groups = read_groups(groups_path)?;
     let credentials = MeetupCredentials::from_env()?;
     let client = MeetupClient::new()?;
     let token = client.authenticate(&credentials)?;

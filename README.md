@@ -33,9 +33,9 @@ cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md 
 
 Incoming events outside the newsletter date range are logged and omitted. The complete candidate document is linted before any changes are atomically written.
 
-## Fetch from Meetup
+## Fetch from event sources
 
-Fetch events for configured Meetup groups and preview the merged listing:
+Fetch Meetup and Luma events together and preview the merged listing:
 
 ```sh
 export MEETUP_PRIVATE_KEY="$HOME/.ssh/meetup_signing_key.pem"
@@ -43,25 +43,38 @@ export MEETUP_AUTHORIZED_MEMBER_ID="..."
 export MEETUP_CLIENT_KEY="..."
 
 cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
-  --meetup-groups groups/rust-meetups.json
+  --event-sources groups/rust-event-sources.json
 ```
 
-Meetup group files are arrays of records with a `url`, an optional `event_format` of `virtual` or `hybrid`, and an optional `required_title_token`:
+The source file contains separate Meetup and Luma arrays. Either array may be empty:
 
 ```json
-[
-  { "url": "https://www.meetup.com/bcnrust" },
-  {
-    "url": "https://www.meetup.com/join-srug",
-    "event_format": "hybrid"
-  },
-  {
-    "url": "https://www.meetup.com/hackerdojo",
-    "required_title_token": "rust"
-  }
-]
+{
+  "meetup": [
+    { "url": "https://www.meetup.com/bcnrust" },
+    {
+      "url": "https://www.meetup.com/join-srug",
+      "event_format": "hybrid"
+    },
+    {
+      "url": "https://www.meetup.com/hackerdojo",
+      "required_title_token": "rust"
+    }
+  ],
+  "luma": [
+    {
+      "calendar_url": "https://luma.com/rust-girona",
+      "ical_url": "https://api.lu.ma/ics/get?entity=calendar&id=cal-YjQVtnwkdU40fBI",
+      "default_location": "Girona, ES",
+      "region": "Europe",
+      "timezone": "Europe/Madrid"
+    }
+  ]
+}
 ```
 
-Required title tokens are matched case-insensitively after splitting titles on non-alphanumeric characters. Add `--in-place` to atomically update the draft. Meetup collection uses the date range declared in the draft. `--meetup-groups` can be combined with `--new-events-file`; manually supplied events take precedence when event URLs overlap.
+Meetup records support an optional `event_format` of `virtual` or `hybrid` and an optional `required_title_token`. Required title tokens are matched case-insensitively after splitting titles on non-alphanumeric characters. If the OAuth client has multiple signing keys or requires explicit key selection, also set `MEETUP_SIGNING_KEY_ID`.
 
-If the OAuth client has multiple signing keys or requires explicit key selection, also set `MEETUP_SIGNING_KEY_ID`; it is otherwise optional for compatibility with existing Meetup clients.
+Copy a Luma calendar's feed URL from **Add iCal Subscription → Copy URL** on its public page. Its records require a TWIR location, region, and IANA timezone because iCalendar locations are unstructured and timestamps may be UTC. An optional `event_format` can override virtual or hybrid classification; otherwise a URL-valued iCalendar `LOCATION` is treated as virtual.
+
+Add `--in-place` to atomically update the draft. Collection uses the date range declared in the draft. Luma events take precedence over matching Meetup event URLs, and manually supplied `--new-events-file` events are applied last.

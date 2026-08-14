@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::collections::HashSet;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -21,18 +21,13 @@ pub struct MeetupGroup {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ConfiguredGroup {
+pub(crate) struct ConfiguredGroup {
     url: String,
     event_format: Option<EventFormat>,
     required_title_token: Option<String>,
 }
 
-pub fn read_groups(path: &Path) -> anyhow::Result<Vec<MeetupGroup>> {
-    let contents = fs::read_to_string(path)
-        .with_context(|| format!("failed to read Meetup groups from {}", path.display()))?;
-    let configured: Vec<ConfiguredGroup> = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse Meetup groups from {}", path.display()))?;
-
+pub fn validate_groups(configured: Vec<ConfiguredGroup>) -> anyhow::Result<Vec<MeetupGroup>> {
     let mut names = HashSet::new();
     let mut groups = Vec::with_capacity(configured.len());
     for configured_group in configured {
@@ -109,25 +104,6 @@ mod tests {
     #[test]
     fn rejects_non_meetup_hosts() {
         assert!(parse_group("https://example.com/rust", None, None).is_err());
-    }
-
-    #[test]
-    fn reads_existing_group_configuration() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("groups/rust-meetups.json");
-
-        let groups = read_groups(&path).unwrap();
-
-        assert_eq!(groups.len(), 142);
-        assert!(groups.iter().any(|group| {
-            group.url_name == "vancouver-rust" && group.event_format == Some(EventFormat::Hybrid)
-        }));
-        assert_eq!(
-            groups
-                .iter()
-                .filter(|group| group.required_title_token.is_some())
-                .count(),
-            26
-        );
     }
 
     #[test]
