@@ -1,0 +1,76 @@
+{
+  "entries": [
+    {
+      "api_id": "calev-Physical123",
+      "calendar_api_id": "cal-TestCalendar123",
+      "status": "approved",
+      "platform": "luma",
+      "event": {
+        "api_id": "evt-Physical123",
+        "calendar_api_id": "cal-TestCalendar123",
+        "name": "Physical Rust Event",
+        "start_at": "2026-10-21T01:00:00.000Z",
+        "timezone": "America/New_York",
+        "url": "physical-rust",
+        "visibility": "public",
+        "location_type": "offline",
+        "geo_address_info": {
+          "mode": "shown",
+          "city": "New York",
+          "region": "New York",
+          "region_short": "NY",
+          "country": "United States",
+          "country_code": "US"
+        }
+      },
+      "calendar": {
+        "api_id": "cal-TestCalendar123",
+        "name": "Test Rust Calendar"
+      }
+    },
+    {
+      "api_id": "calev-Virtual123",
+      "calendar_api_id": "cal-TestCalendar123",
+      "status": "approved",
+      "platform": "luma",
+      "event": {
+        "api_id": "evt-Virtual123",
+        "calendar_api_id": "cal-TestCalendar123",
+        "name": "Virtual Rust Event",
+        "start_at": "2026-10-22T09:00:00.000Z",
+        "timezone": "Europe/London",
+        "url": "virtual-rust",
+        "visibility": "public",
+        "location_type": "unknown",
+        "geo_address_info": null
+      },
+      "calendar": {
+        "api_id": "cal-TestCalendar123",
+        "name": "Test Rust Calendar"
+      }
+    },
+    {
+      "api_id": "calev-CrossListed123",
+      "calendar_api_id": "cal-TestCalendar123",
+      "status": "approved",
+      "platform": "luma",
+      "event": {
+        "api_id": "evt-CrossListed123",
+        "calendar_api_id": "cal-OtherCalendar123",
+        "name": "Cross-listed Rust Event",
+        "start_at": "2026-10-22T10:00:00.000Z",
+        "timezone": "Europe/Paris",
+        "url": "cross-listed-rust",
+        "visibility": "public",
+        "location_type": "zoom",
+        "geo_address_info": null
+      },
+      "calendar": {
+        "api_id": "cal-OtherCalendar123",
+        "name": "Other Rust Calendar"
+      }
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}

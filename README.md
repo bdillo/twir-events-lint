@@ -64,10 +64,7 @@ The source file contains separate Meetup and Luma arrays. Either array may be em
   "luma": [
     {
       "calendar_url": "https://luma.com/rust-girona",
-      "ical_url": "https://api.lu.ma/ics/get?entity=calendar&id=cal-YjQVtnwkdU40fBI",
-      "default_location": "Girona, ES",
-      "region": "Europe",
-      "timezone": "Europe/Madrid"
+      "calendar_id": "cal-YjQVtnwkdU40fBI"
     }
   ]
 }
@@ -75,6 +72,6 @@ The source file contains separate Meetup and Luma arrays. Either array may be em
 
 Meetup records support an optional `event_format` of `virtual` or `hybrid` and an optional `required_title_token`. Required title tokens are matched case-insensitively after splitting titles on non-alphanumeric characters. If the OAuth client has multiple signing keys or requires explicit key selection, also set `MEETUP_SIGNING_KEY_ID`.
 
-Copy a Luma calendar's feed URL from **Add iCal Subscription → Copy URL** on its public page. Its records require a TWIR location, region, and IANA timezone because iCalendar locations are unstructured and timestamps may be UTC. An optional `event_format` can override virtual or hybrid classification; otherwise a URL-valued iCalendar `LOCATION` is treated as virtual.
+Luma records contain the canonical public calendar URL and its `cal-` ID. Collection uses Luma's anonymous calendar endpoint to obtain per-event timezones, location types, and structured geographic addresses. Cross-listed events owned by another calendar are omitted. An optional `event_format` can override virtual or hybrid classification.
 
 Add `--in-place` to atomically update the draft. Collection uses the date range declared in the draft. Luma events take precedence over matching Meetup event URLs, and manually supplied `--new-events-file` events are applied last.

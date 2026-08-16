@@ -1,7 +1,6 @@
 mod api;
 mod auth;
 pub(super) mod config;
-mod location;
 
 use std::collections::HashSet;
 
@@ -15,8 +14,8 @@ use self::{
     api::{ApiEvent, ApiGroup, ApiVenue, MeetupClient},
     auth::MeetupCredentials,
     config::{EventFormat, MeetupGroup},
-    location::Location,
 };
+use super::location::Location;
 
 const MAX_PAGES_PER_GROUP: usize = 100;
 

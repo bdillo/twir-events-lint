@@ -1,4 +1,5 @@
 mod config;
+mod location;
 mod luma;
 mod meetup;
 

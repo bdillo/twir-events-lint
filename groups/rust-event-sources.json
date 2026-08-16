@@ -458,11 +458,40 @@
     ],
     "luma": [
         {
+            "calendar_url": "https://luma.com/calendar/cal-6iBdyQtCsg1pIVH",
+            "calendar_id": "cal-6iBdyQtCsg1pIVH"
+        },
+        {
+            "calendar_url": "https://luma.com/calendar/cal-i1Fj6NESj2OzikJ",
+            "calendar_id": "cal-i1Fj6NESj2OzikJ"
+        },
+        {
+            "calendar_url": "https://luma.com/calendar/cal-nZOrLOAvKZsR34i",
+            "calendar_id": "cal-nZOrLOAvKZsR34i"
+        },
+        {
             "calendar_url": "https://luma.com/rust-girona",
-            "ical_url": "https://api.lu.ma/ics/get?entity=calendar&id=cal-YjQVtnwkdU40fBI",
-            "default_location": "Girona, ES",
-            "region": "Europe",
-            "timezone": "Europe/Madrid"
+            "calendar_id": "cal-YjQVtnwkdU40fBI"
+        },
+        {
+            "calendar_url": "https://luma.com/rust-in-ai",
+            "calendar_id": "cal-9weltHyXks2SCuH"
+        },
+        {
+            "calendar_url": "https://luma.com/rust-maven",
+            "calendar_id": "cal-ThoZUSuwBbWLTKb"
+        },
+        {
+            "calendar_url": "https://luma.com/rust-sc",
+            "calendar_id": "cal-iOloL5ZqswCO5Mm"
+        },
+        {
+            "calendar_url": "https://luma.com/rusteastcoast",
+            "calendar_id": "cal-k19eAdMs6zlEZJU"
+        },
+        {
+            "calendar_url": "https://luma.com/turkiyerust",
+            "calendar_id": "cal-hHlSd2jRMl1F9hW"
         }
     ]
 }

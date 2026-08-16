@@ -476,6 +476,8 @@ impl TryFrom<CollectedEvent> for EventListing {
 
         let location = if collected.is_hybrid {
             EventLocation::Hybrid(collected.location)
+        } else if collected.is_virtual && collected.location.trim().is_empty() {
+            EventLocation::Virtual
         } else if collected.is_virtual {
             EventLocation::VirtualWithLocation(collected.location)
         } else {
@@ -733,6 +735,16 @@ mod tests {
             listing.overview().location(),
             &EventLocation::VirtualWithLocation("Berlin, DE".to_owned())
         );
+    }
+
+    #[test]
+    fn virtual_collected_event_can_omit_a_location() {
+        let mut collected = collected_event();
+        collected.location.clear();
+
+        let listing = EventListing::try_from(collected).unwrap();
+
+        assert_eq!(listing.overview().location(), &EventLocation::Virtual);
     }
 
     #[test]

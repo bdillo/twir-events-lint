@@ -10,8 +10,14 @@ pub struct Location {
 impl Location {
     pub fn new(city: Option<String>, state: Option<String>, country: Option<String>) -> Self {
         let city = normalize(city);
-        let mut state = normalize(state).map(|value| value.to_uppercase());
         let mut country = normalize(country).map(|value| value.to_uppercase());
+        let mut state = normalize(state).map(|value| {
+            if country.as_deref() == Some("US") {
+                us_state_code(&value).unwrap_or_else(|| value.to_uppercase())
+            } else {
+                value.to_uppercase()
+            }
+        });
 
         if country.as_deref() == Some("GB") {
             country = Some("UK".to_owned());
@@ -54,6 +60,71 @@ fn normalize(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn us_state_code(state: &str) -> Option<String> {
+    let code = match state.trim().to_ascii_lowercase().as_str() {
+        "alabama" => "AL",
+        "alaska" => "AK",
+        "arizona" => "AZ",
+        "arkansas" => "AR",
+        "california" => "CA",
+        "colorado" => "CO",
+        "connecticut" => "CT",
+        "delaware" => "DE",
+        "district of columbia" => "DC",
+        "florida" => "FL",
+        "georgia" => "GA",
+        "hawaii" => "HI",
+        "idaho" => "ID",
+        "illinois" => "IL",
+        "indiana" => "IN",
+        "iowa" => "IA",
+        "kansas" => "KS",
+        "kentucky" => "KY",
+        "louisiana" => "LA",
+        "maine" => "ME",
+        "maryland" => "MD",
+        "massachusetts" => "MA",
+        "michigan" => "MI",
+        "minnesota" => "MN",
+        "mississippi" => "MS",
+        "missouri" => "MO",
+        "montana" => "MT",
+        "nebraska" => "NE",
+        "nevada" => "NV",
+        "new hampshire" => "NH",
+        "new jersey" => "NJ",
+        "new mexico" => "NM",
+        "new york" => "NY",
+        "north carolina" => "NC",
+        "north dakota" => "ND",
+        "ohio" => "OH",
+        "oklahoma" => "OK",
+        "oregon" => "OR",
+        "pennsylvania" => "PA",
+        "rhode island" => "RI",
+        "south carolina" => "SC",
+        "south dakota" => "SD",
+        "tennessee" => "TN",
+        "texas" => "TX",
+        "utah" => "UT",
+        "vermont" => "VT",
+        "virginia" => "VA",
+        "washington" => "WA",
+        "west virginia" => "WV",
+        "wisconsin" => "WI",
+        "wyoming" => "WY",
+        code if code.len() == 2
+            && code
+                .chars()
+                .all(|character| character.is_ascii_alphabetic()) =>
+        {
+            return Some(code.to_ascii_uppercase());
+        }
+        _ => return None,
+    };
+    Some(code.to_owned())
 }
 
 fn country_region(country: &str) -> Option<Region> {
@@ -113,6 +184,17 @@ mod tests {
 
         assert_eq!(location.display_name(), "Indianapolis, IN, US");
         assert_eq!(location.region(), Some(Region::NorthAmerica));
+    }
+
+    #[test]
+    fn abbreviates_us_state_names() {
+        let location = Location::new(
+            Some("San Francisco".to_owned()),
+            Some("California".to_owned()),
+            Some("US".to_owned()),
+        );
+
+        assert_eq!(location.display_name(), "San Francisco, CA, US");
     }
 
     #[test]

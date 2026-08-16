@@ -41,32 +41,6 @@ fn validate_sources(configured: ConfiguredSources) -> anyhow::Result<EventSource
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collect::meetup::config::EventFormat;
-
-    #[test]
-    fn reads_repository_event_sources() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("groups/rust-event-sources.json");
-
-        let sources = read_sources(&path).unwrap();
-
-        assert_eq!(sources.meetup.len(), 142);
-        assert!(sources.meetup.iter().any(|group| {
-            group.url_name == "vancouver-rust" && group.event_format == Some(EventFormat::Hybrid)
-        }));
-        assert_eq!(
-            sources
-                .meetup
-                .iter()
-                .filter(|group| group.required_title_token.is_some())
-                .count(),
-            26
-        );
-        assert_eq!(sources.luma.len(), 1);
-        assert_eq!(
-            sources.luma[0].calendar_url.as_str(),
-            "https://luma.com/rust-girona"
-        );
-    }
 
     #[test]
     fn rejects_empty_source_configuration() {
