@@ -75,3 +75,15 @@ Meetup records support an optional `event_format` of `virtual` or `hybrid` and a
 Luma records contain the canonical public calendar URL and its `cal-` ID. Collection uses Luma's anonymous calendar endpoint to obtain per-event timezones, location types, and structured geographic addresses. Cross-listed events owned by another calendar are omitted. An optional `event_format` can override virtual or hybrid classification.
 
 Add `--in-place` to atomically update the draft. Collection uses the date range declared in the draft. Luma events take precedence over matching Meetup event URLs, and manually supplied `--new-events-file` events are applied last.
+
+## Diagnose collected events
+
+Add `--debug` to log the deserialized Meetup and Luma API responses, filtering decisions, and location normalization to stderr. For example:
+
+```sh
+cargo run -- --draft ../this-week-in-rust/draft/2025-05-14-this-week-in-rust.md \
+  --event-sources groups/rust-event-sources.json \
+  --debug
+```
+
+The Meetup diagnostics show both the group and venue locations, which one was selected, and the final rendered location. Authentication tokens and signing credentials are not logged.

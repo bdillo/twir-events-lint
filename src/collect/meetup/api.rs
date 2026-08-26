@@ -2,7 +2,7 @@ use std::{thread, time::Duration};
 
 use anyhow::{Context, bail};
 use chrono::{DateTime, NaiveDate, Utc};
-use log::warn;
+use log::{debug, warn};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
@@ -122,50 +122,50 @@ struct GraphqlRequest<'a> {
     variables: EventVariables<'a>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GraphqlResponse<T> {
     data: Option<T>,
     #[serde(default)]
     errors: Vec<GraphqlError>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GraphqlError {
     message: String,
     extensions: Option<GraphqlErrorExtensions>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraphqlErrorExtensions {
     code: Option<String>,
     reset_at: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EventData {
     group_by_urlname: Option<ApiEventConnection>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ApiEventConnection {
     events: ApiEvents,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ApiEvents {
     page_info: PageInfo,
     edges: Vec<ApiEventEdge>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ApiEventEdge {
     node: ApiEvent,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PageInfo {
     has_next_page: bool,
@@ -247,6 +247,10 @@ impl MeetupClient {
                 .with_context(|| {
                     format!("failed to parse Meetup response for group '{group_name}'")
                 })?;
+
+            debug!(
+                "meetup API response for group '{group_name}' (cursor {after:?}): {response:#?}"
+            );
 
             let Some(reset_at) = response.rate_limit_reset() else {
                 return parse_event_page(response, group_name);

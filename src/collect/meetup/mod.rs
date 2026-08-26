@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use anyhow::{Context, bail};
 use chrono::NaiveDate;
+use log::debug;
 use url::Url;
 
 use crate::events::{CollectedEvent, CollectedEventsByRegion, Region};
@@ -94,6 +95,10 @@ pub(crate) fn collect(
             event.title.as_deref(),
             group.required_title_token.as_deref(),
         ) {
+            debug!(
+                "excluding meetup event from '{}' because title {:?} does not contain token {:?}",
+                group.url, event.title, group.required_title_token
+            );
             continue;
         }
         match normalize_event(event, &group) {
@@ -162,6 +167,10 @@ fn normalize_event(
     event: ApiEvent,
     configured_group: &MeetupGroup,
 ) -> anyhow::Result<NormalizedEvent> {
+    debug!(
+        "normalizing meetup API event from '{}': {event:#?}",
+        configured_group.url
+    );
     let ApiEvent {
         group,
         title,
@@ -179,12 +188,19 @@ fn normalize_event(
     let group_location = group_location(&group);
     let venue = venue(venues, configured_group.event_format, &group)?;
     let event_location = Location::new(venue.city, venue.state, venue.country);
-    let location = if event_location.fields_present() > group_location.fields_present() {
-        event_location
-    } else {
-        group_location
-    };
+    let same_place = same_city_and_country(&event_location, &group_location);
+    let (location, location_source) =
+        if !same_place && event_location.fields_present() > group_location.fields_present() {
+            (event_location.clone(), "event venue")
+        } else if same_place {
+            (group_location.clone(), "group (same city and country)")
+        } else {
+            (group_location.clone(), "group")
+        };
     let location_name = location.display_name();
+    debug!(
+        "meetup event '{title}' location: group={group_location:?}, venue={event_location:?}, selected={location_source}, rendered={location_name:?}"
+    );
     if location_name.is_empty() {
         bail!("event and group locations are empty");
     }
@@ -236,6 +252,21 @@ fn group_location(group: &ApiGroup) -> Location {
         group.state.clone(),
         group.country.clone(),
     )
+}
+
+fn same_city_and_country(left: &Location, right: &Location) -> bool {
+    match (
+        left.city.as_deref(),
+        left.country.as_deref(),
+        right.city.as_deref(),
+        right.country.as_deref(),
+    ) {
+        (Some(left_city), Some(left_country), Some(right_city), Some(right_country)) => {
+            left_city.to_lowercase() == right_city.to_lowercase()
+                && left_country.eq_ignore_ascii_case(right_country)
+        }
+        _ => false,
+    }
 }
 
 fn venue(
@@ -331,6 +362,25 @@ mod tests {
 
         assert!(event.event.is_virtual);
         assert_eq!(event.event.location, "London, UK");
+    }
+
+    #[test]
+    fn group_location_supplies_canonical_casing_for_the_same_place() {
+        let mut event = api_event("physical");
+        event.group.as_mut().unwrap().city = Some("Prague".to_owned());
+        event.group.as_mut().unwrap().state = Some(String::new());
+        event.group.as_mut().unwrap().country = Some("cz".to_owned());
+        event.venues[0] = ApiVenue {
+            city: Some("prague".to_owned()),
+            state: Some("ca".to_owned()),
+            country: Some("cz".to_owned()),
+            venue_type: Some("physical".to_owned()),
+        };
+
+        let event = normalize_event(event, &group(None)).unwrap();
+
+        assert_eq!(event.event.location, "Prague, CZ");
+        assert_eq!(event.regions, vec![Region::Europe]);
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub struct Args {
     /// Remove events outside the newsletter date range
     #[arg(long, default_value_t = false)]
     fix: bool,
-    /// Enable debug logging
+    /// Log API responses and event normalization decisions
     #[arg(long, default_value_t = false)]
     debug: bool,
     /// Error limit before bailing - otherwise you could have a lot of output if the linter gets in a weird state

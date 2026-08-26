@@ -5,6 +5,7 @@ use std::{collections::HashSet, io::Read, time::Duration};
 use anyhow::{Context, bail};
 use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
+use log::debug;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use url::Url;
@@ -251,12 +252,18 @@ fn fetch_page(
             configured.calendar_url
         );
     }
-    serde_json::from_slice(&contents).with_context(|| {
+    let page = serde_json::from_slice::<ApiPage>(&contents).with_context(|| {
         format!(
             "failed to parse Luma API response for '{}'",
             configured.calendar_url
         )
-    })
+    })?;
+    debug!(
+        "luma API response for calendar '{}' (period {}, cursor {cursor:?}): {page:#?}",
+        configured.calendar_url,
+        period.as_str()
+    );
+    Ok(page)
 }
 
 fn validate_pagination(
@@ -308,12 +315,20 @@ fn normalize_page(
             );
         }
         if event.calendar_api_id != configured.calendar_id {
+            debug!(
+                "excluding cross-listed luma event '{}' owned by calendar '{}'",
+                event.api_id, event.calendar_api_id
+            );
             continue;
         }
 
         let date =
             event_date(&event).with_context(|| format!("invalid Luma event '{}'", event.api_id))?;
         if date < range_start || date > range_end {
+            debug!(
+                "excluding out-of-range luma event '{}' on {date} (wanted {range_start} through {range_end})",
+                event.api_id
+            );
             continue;
         }
         match normalize_event(*event, calendar, configured, date) {
@@ -343,6 +358,10 @@ fn normalize_event(
     configured: &LumaCalendar,
     date: NaiveDate,
 ) -> anyhow::Result<NormalizedEvent> {
+    debug!(
+        "normalizing luma API event from '{}': event={event:#?}, calendar={calendar:#?}",
+        configured.calendar_url
+    );
     let name = required_text(&event.name, "event name")?;
     let organizer_name = required_text(&calendar.name, "calendar name")?;
     let event_url = event_url(&event.url)?;
@@ -372,6 +391,9 @@ fn normalize_event(
         let (location, region) = physical_location.expect("offline location was required");
         (location, vec![region])
     };
+    debug!(
+        "luma event '{name}' normalized to date={date}, location={location:?}, virtual={is_virtual}, hybrid={is_hybrid}, regions={regions:?}"
+    );
 
     Ok(NormalizedEvent {
         event: CollectedEvent {
