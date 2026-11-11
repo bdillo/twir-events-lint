@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-};
+use std::{collections::HashMap, hash::Hash};
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -337,6 +334,52 @@ impl EventListing {
     pub fn events(&self) -> &[Event] {
         &self.events
     }
+
+    fn matches_for_merge(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+
+        // Multi-link listings may represent co-hosted events; don't guess which
+        // individual event or organizer should determine their identity.
+        let ([event], [other_event]) = (self.events(), other.events()) else {
+            return false;
+        };
+        let ([group], [other_group]) = (self.overview.groups(), other.overview.groups()) else {
+            return false;
+        };
+        if !is_meetup_url(&event.url) || !is_meetup_url(&other_event.url) {
+            return false;
+        }
+
+        let Some(group_slug) = meetup_group_slug(&group.url) else {
+            return false;
+        };
+        meetup_group_slug(&other_group.url) == Some(group_slug)
+            && self.overview.date == other.overview.date
+            && normalize_title(&event.name) == normalize_title(&other_event.name)
+    }
+}
+
+fn is_meetup_url(url: &Url) -> bool {
+    matches!(url.host_str(), Some("meetup.com" | "www.meetup.com"))
+}
+
+fn meetup_group_slug(url: &Url) -> Option<&str> {
+    if !is_meetup_url(url) {
+        return None;
+    }
+    let path = url.path().trim_matches('/');
+    let slug = path.strip_suffix("/events").unwrap_or(path);
+    (!slug.is_empty() && !slug.contains('/')).then_some(slug)
+}
+
+fn normalize_title(title: &str) -> String {
+    title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 impl Ord for EventListing {
@@ -580,50 +623,29 @@ impl EventsByRegion {
         let mut updated = EventsByRegion::new();
 
         for region in Region::ALL {
-            let maybe_current_events = self.0.get(&region);
-            let maybe_new_events = other.0.get(&region);
-
-            // no current events in region, only new. take all new events
-            if maybe_current_events.is_none()
-                && let Some(new_events) = maybe_new_events
+            let mut merged: Vec<EventListing> = Vec::new();
+            // Incoming listings take precedence; the first incoming match wins.
+            // Compare against all candidates, not just retained listings, because
+            // URL-or-metadata matching is not transitive.
+            let mut seen: Vec<&EventListing> = Vec::new();
+            for event in other
+                .0
+                .get(&region)
+                .into_iter()
+                .flatten()
+                .chain(self.0.get(&region).into_iter().flatten())
             {
-                for event in new_events {
-                    updated.add(event.clone(), region);
-                }
-            }
-
-            // no new events in region, only current. take all current events
-            if maybe_new_events.is_none()
-                && let Some(current_events) = maybe_current_events
-            {
-                for event in current_events {
-                    updated.add(event.clone(), region);
-                }
-            }
-
-            // both new and current events - needs merge logic
-            if let Some(new_events) = maybe_new_events
-                && let Some(current_events) = maybe_current_events
-            {
-                let new = new_events
+                if !seen
                     .iter()
-                    .cloned()
-                    .collect::<HashSet<EventListing>>();
-
-                let current = current_events
-                    .iter()
-                    .cloned()
-                    .collect::<HashSet<EventListing>>();
-
-                // anything that overlaps, we take the newer version of the event. otherwise copy everything else
-                let mut merged = new;
-                merged.extend(current.difference(&merged.clone()).cloned());
-
-                for event in merged {
-                    updated.add(event.clone(), region);
+                    .any(|candidate| candidate.matches_for_merge(event))
+                {
+                    merged.push(event.clone());
                 }
+                seen.push(event);
             }
-            // let the case where both are none fall through - nothing to do here
+            for event in merged {
+                updated.add(event, region);
+            }
         }
 
         updated
@@ -709,6 +731,112 @@ mod tests {
             organizer_name: "Test Group".to_owned(),
             organizer_url: "https://example.com/group/".to_owned(),
             is_hybrid: false,
+        }
+    }
+
+    fn meetup_event(id: &str) -> EventListing {
+        let mut collected = collected_event();
+        collected.name = "Mid-month Rustful".to_owned();
+        collected.url = format!("https://www.meetup.com/rustdc/events/{id}/");
+        collected.organizer_url = "https://www.meetup.com/rustdc/events/".to_owned();
+        EventListing::try_from(collected).unwrap()
+    }
+
+    #[test]
+    fn merge_replaces_meetup_alias_with_incoming_listing() {
+        let mut current = EventsByRegion::new();
+        current.add(meetup_event("fhvsztyjcpbwb"), Region::Virtual);
+        let mut incoming = EventsByRegion::new();
+        let mut replacement = meetup_event("317182776");
+        replacement.overview.groups.0[0].url = Url::parse("https://meetup.com/rustdc").unwrap();
+        replacement.events.0[0].name = "  MID-MONTH   Rustful ".to_owned();
+        incoming.add(replacement, Region::Virtual);
+
+        let merged = current.merge(&incoming);
+        let events = &merged.0[&Region::Virtual];
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].events()[0].url(),
+            &meetup_event("317182776").events()[0].url
+        );
+    }
+
+    #[test]
+    fn merge_deduplicates_incoming_events_without_existing_region() {
+        let mut incoming = EventsByRegion::new();
+        incoming.add(meetup_event("317182776"), Region::Virtual);
+        incoming.add(meetup_event("fhvsztyjcpbwb"), Region::Virtual);
+
+        let merged = EventsByRegion::new().merge(&incoming);
+        assert_eq!(merged.0[&Region::Virtual].len(), 1);
+        assert_eq!(merged.0[&Region::Virtual][0], meetup_event("317182776"));
+    }
+
+    #[test]
+    fn meetup_fallback_requires_matching_date_title_and_group() {
+        let original = meetup_event("old");
+        let mut different_date = meetup_event("new");
+        different_date.overview.date =
+            EventDate::Date(NaiveDate::from_ymd_opt(2024, 10, 26).unwrap());
+        let mut different_title = meetup_event("new");
+        different_title.events.0[0].name = "Another event".to_owned();
+        let mut different_group = meetup_event("new");
+        different_group.overview.groups.0[0].url =
+            Url::parse("https://www.meetup.com/other").unwrap();
+        let mut non_meetup = meetup_event("new");
+        non_meetup.events.0[0].url = Url::parse("https://example.com/event").unwrap();
+        let mut cohosted = meetup_event("new");
+        cohosted.events.0.push(cohosted.events.0[0].clone());
+
+        for distinct in [
+            different_date,
+            different_title,
+            different_group,
+            non_meetup,
+            cohosted,
+        ] {
+            let mut current = EventsByRegion::new();
+            current.add(original.clone(), Region::Virtual);
+            let mut incoming = EventsByRegion::new();
+            incoming.add(distinct, Region::Virtual);
+            assert_eq!(current.merge(&incoming).0[&Region::Virtual].len(), 2);
+        }
+    }
+
+    #[test]
+    fn same_url_updates_survive_title_and_date_changes() {
+        let mut current = EventsByRegion::new();
+        current.add(meetup_event("same"), Region::Virtual);
+        let mut replacement = meetup_event("same");
+        replacement.events.0[0].name = "Rescheduled event".to_owned();
+        replacement.overview.date = EventDate::Date(NaiveDate::from_ymd_opt(2024, 11, 1).unwrap());
+        let mut incoming = EventsByRegion::new();
+        incoming.add(replacement.clone(), Region::Virtual);
+
+        let merged = current.merge(&incoming);
+        assert_eq!(merged.0[&Region::Virtual].len(), 1);
+        assert_eq!(
+            merged.0[&Region::Virtual][0].to_string(),
+            replacement.to_string()
+        );
+    }
+
+    #[test]
+    fn merge_preserves_hybrid_listings_in_each_region() {
+        let mut current = EventsByRegion::new();
+        let mut incoming = EventsByRegion::new();
+        for region in [Region::Virtual, Region::NorthAmerica] {
+            let mut old = meetup_event("old");
+            old.overview.location = EventLocation::Hybrid("Washington, DC, US".to_owned());
+            let mut new = old.clone();
+            new.events.0[0].url = meetup_event("new").events.0[0].url.clone();
+            current.add(old, region);
+            incoming.add(new, region);
+        }
+        let merged = current.merge(&incoming);
+        for region in [Region::Virtual, Region::NorthAmerica] {
+            assert_eq!(merged.0[&region].len(), 1);
+            assert_eq!(merged.0[&region][0], meetup_event("new"));
         }
     }
 
