@@ -1,3 +1,14 @@
+# Add an event with Pi
+
+The project skill accepts an event URL and an optional draft file, draft directory, or newsletter repository path:
+
+```text
+/skill:add-event https://example.com/event
+/skill:add-event https://example.com/event ../this-week-in-rust/draft/2026-11-11-this-week-in-rust.md
+```
+
+It defaults to `../this-week-in-rust`, finds the sole dated newsletter in `draft/` (asks if ambiguous), reads the event details, inserts the listing, and runs this repository's linter. Run `/reload` in an existing Pi session to discover the skill. Instructions live in [`.agents/skills/add-event/SKILL.md`](.agents/skills/add-event/SKILL.md), a portable skills location also supported by Pi.
+
 # Lint
 
 Lint a TWIR draft:
